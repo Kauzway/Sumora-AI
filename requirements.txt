@@ -13,4 +13,5 @@ typing-extensions>=3.10.0
 groq
 python-dotenv
 pydantic
-scikit-learn 
+scikit-learn
+gunicorn>=20.1.0 
