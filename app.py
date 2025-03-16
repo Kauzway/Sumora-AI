@@ -1800,11 +1800,7 @@ def generate_all_summaries_background(session_id):
 
 # Run the app
 if __name__ == '__main__':
-    # Get port from environment variable or use default
+    # Get port from environment variable (Cloud Run) or use default
     port = int(os.environ.get('PORT', 5002))
-    
-    # Get debug mode from environment variable (default to False for production)
-    debug = os.environ.get('FLASK_DEBUG', '0').lower() in ['1', 'true', 't', 'yes', 'y']
-    
-    print(f"Starting Sumora AI on port {port} (Debug mode: {'ON' if debug else 'OFF'})")
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    # Binding to 0.0.0.0 is important for Cloud Run
+    app.run(host='0.0.0.0', port=port, debug=False)
