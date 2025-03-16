@@ -1800,7 +1800,26 @@ def generate_all_summaries_background(session_id):
 
 # Run the app
 if __name__ == '__main__':
-    # Get port from environment variable (Cloud Run) or use default
-    port = int(os.environ.get('PORT', 5002))
-    # Binding to 0.0.0.0 is important for Cloud Run
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # For Cloud Run, use gunicorn with a proper production server if available
+    try:
+        port = int(os.environ.get('PORT', 8080))
+        print(f"Starting application on port {port}")
+        
+        # Try to log a clearer message about the environment
+        print(f"Environment: {'Production (Cloud Run)' if 'K_SERVICE' in os.environ else 'Development'}")
+        
+        # Explicitly check for Cloud Run environment
+        if 'K_SERVICE' in os.environ:
+            print("Detected Cloud Run environment, using production settings")
+            # In production environments, we should use a proper WSGI server
+            # But if we're running directly, use the Flask dev server but with proper host and port
+            app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+        else:
+            print("Development environment detected")
+            # In development, use debug mode
+            app.run(host='0.0.0.0', port=port, debug=True)
+    except Exception as e:
+        print(f"Error starting the application: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
