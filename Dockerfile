@@ -16,15 +16,20 @@ WORKDIR /app
 # Copy requirements file
 COPY requirements.txt .
 
-# Install gunicorn and Python dependencies
-RUN pip install --no-cache-dir gunicorn
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+# Explicitly install gunicorn and verify it's installed
+RUN pip install --no-cache-dir gunicorn && \
+    gunicorn --version
 
 # Copy the rest of the application
 COPY . .
 
+# Ensure entrypoint script is executable
+RUN chmod +x /app/entrypoint.sh
+
 # Expose the port the app runs on
 EXPOSE 8080
 
-# Use gunicorn to run the app in production mode
-CMD exec gunicorn --bind :8080 --workers 1 --threads 8 --timeout 0 app:app 
+# Use the entrypoint script
+CMD ["/app/entrypoint.sh"] 
