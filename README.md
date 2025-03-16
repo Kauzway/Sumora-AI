@@ -1,89 +1,113 @@
-# Slide Extraction Chatbot
+# Sumora AI
 
-A web-based chatbot that extracts text from slides (PDF, PPT, PPTX) and allows you to ask questions about the content using the Gemini AI model.
+Sumora AI is an intelligent presentation analysis tool that leverages AI to automatically generate concise summaries of presentation slides. It helps users quickly understand and extract key points from PDF presentations without having to read through every slide in detail.
+
+![Sumora AI](static/images/Sumora%20Full%20logo.png)
 
 ## Features
 
-- Upload slide files (PDF, PPT, PPTX)
-- Automatic text extraction from slides
-- Chat interface to ask questions about the slide content
-- AI-powered responses using Google's Gemini API
+- **PDF Presentation Processing**: Upload PDF presentations for AI-powered analysis
+- **Slide Summarization**: Automatic generation of concise summaries for each slide
+- **Interactive UI**: Modern, responsive interface with light/dark mode
+- **AI Chat Assistance**: Ask questions about any slide or the entire presentation
+- **RAG Technology**: Uses Retrieval-Augmented Generation for accurate responses
+- **Multi-model Support**: Connects to Groq API using Mistral Saba 24B model
 
-## Prerequisites
+## Demo
 
-- Python 3.8 or higher
-- Google Gemini API key
+[Check out the live demo](#) *(Add your deployed link here when available)*
 
-## Installation
+## Getting Started
 
-1. Clone this repository or download the code.
+### Prerequisites
 
-2. Install the required Python packages:
+- Python 3.8+
+- Groq API key ([Get one here](https://console.groq.com/))
+
+### Installation
+
+1. Clone the repository
+   ```
+   git clone https://github.com/Kauzway/Sumora.git
+   cd Sumora
+   ```
+
+2. Create and activate virtual environment
+   ```
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. Install dependencies
    ```
    pip install -r requirements.txt
    ```
 
-3. Set your Gemini API key as an environment variable:
+4. Create environment variables
    ```
-   # On macOS/Linux
-   export GEMINI_API_KEY="your-api-key"
-   
-   # On Windows
-   set GEMINI_API_KEY=your-api-key
+   cp .env.example .env
    ```
-   
-   Alternatively, you can edit the `app.py` file and replace the default API key with your own.
+   Edit the `.env` file and add your Groq API key
 
-## Project Structure
-
-```
-project/
-│
-├── app.py                  # Main Flask application
-├── requirements.txt        # Python dependencies
-│
-├── static/                 # Static files
-│   ├── css/
-│   │   └── style.css       # CSS styles for the web interface
-│   │
-│   └── js/
-│       └── script.js       # JavaScript for the web interface
-│
-├── templates/              # HTML templates
-│   └── index.html          # Main page template
-│
-└── slides/                 # Directory where uploaded slides are stored
-```
-
-## How to Use
-
-1. Start the Flask server:
+5. Run the application
    ```
    python app.py
    ```
 
-2. Open a web browser and go to:
+6. Open your browser and go to http://localhost:5002
+
+## Deployment
+
+### Deploying to Heroku
+
+1. Create a Heroku account
+2. Install Heroku CLI
+3. Login to Heroku
    ```
-   http://localhost:5001
+   heroku login
+   ```
+4. Create a new Heroku app
+   ```
+   heroku create your-app-name
+   ```
+5. Set environment variables
+   ```
+   heroku config:set GROQ_API_KEY=your_groq_api_key
+   ```
+6. Deploy to Heroku
+   ```
+   git push heroku main
    ```
 
-3. Upload your slides (PDF, PPT, or PPTX format).
+### Deploying to Other Platforms
 
-4. Once processing is complete, use the chat interface to ask questions about the slide content.
+This app can be deployed to any platform that supports Python applications. 
+Key requirements:
+- Set environment variables (especially GROQ_API_KEY)
+- Ensure `gunicorn` is installed (included in requirements.txt)
+- Point to `app.py` as the main application file
 
-5. Your slides will be stored in the `slides` folder. You can add slides manually to this folder as well.
+## How to Use
 
-## Supported File Formats
+1. **Upload a Presentation**: Click on the upload button and select a PDF file
+2. **View Slides**: Navigate through slides using the thumbnails or navigation buttons
+3. **Read Summaries**: Each slide will have an AI-generated summary displayed
+4. **Ask Questions**: Use the chat function to ask questions about any slide or the entire presentation
 
-- PDF (.pdf)
-- PowerPoint (.ppt, .pptx)
+## Contributing
 
-## Troubleshooting
-
-- If you encounter issues with PDF extraction, ensure you have the proper dependencies for PyMuPDF.
-- For PowerPoint files, ensure python-pptx is properly installed.
-- Check that your Gemini API key is valid and has not reached usage limits.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is open source and available under the MIT License. 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Built with [Flask](https://flask.palletsprojects.com/)
+- AI powered by [Groq](https://groq.com/)
+- Vector embeddings by [Sentence Transformers](https://www.sbert.net/)
+
+---
+
+Created by [Kauzway.ai](https://kauzway.ai) 

@@ -90,14 +90,18 @@ def record_token_usage(prompt_tokens, completion_tokens):
     # Rate limiting disabled - this is now a no-op
     pass
 
-# Configure Groq API for Qwen QWQ 32B model
+# Configure Groq API for models
 groq_api_key = os.environ.get("GROQ_API_KEY")
 if not groq_api_key:
-    # Use a new API key - the old one is likely expired
-    groq_api_key = "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"
+    print("⚠️ WARNING: No Groq API key found in environment variables")
+    print("Set your GROQ_API_KEY environment variable for AI functionality to work")
+    groq_api_key = ""  # Empty string instead of hardcoded key
 
-# Initialize Groq client
-client = Groq(api_key=groq_api_key)
+# Initialize Groq client - will be initialized properly when API key is available
+client = None
+if groq_api_key:
+    client = Groq(api_key=groq_api_key)
+    print("✅ Groq client initialized successfully")
 
 # Model configuration - use QWQ 32B model
 groq_qwen_model = "qwen-qwq-32b"  # The Groq model name
@@ -1796,4 +1800,11 @@ def generate_all_summaries_background(session_id):
 
 # Run the app
 if __name__ == '__main__':
-    app.run(debug=True, port=5002)
+    # Get port from environment variable or use default
+    port = int(os.environ.get('PORT', 5002))
+    
+    # Get debug mode from environment variable (default to False for production)
+    debug = os.environ.get('FLASK_DEBUG', '0').lower() in ['1', 'true', 't', 'yes', 'y']
+    
+    print(f"Starting Sumora AI on port {port} (Debug mode: {'ON' if debug else 'OFF'})")
+    app.run(host='0.0.0.0', port=port, debug=debug)
