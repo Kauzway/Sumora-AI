@@ -1,0 +1,1912 @@
+import os
+# Removed Gemini import
+from flask import Flask, request, jsonify, render_template, send_from_directory, send_file, Response
+import fitz  # PyMuPDF for PDF processing
+import os
+from werkzeug.utils import secure_filename
+import uuid
+import time
+from functools import lru_cache
+import tempfile
+import base64
+from io import BytesIO
+from PIL import Image, ImageDraw
+import requests
+import json
+import re
+from openai import OpenAI
+from groq import Groq  # Import Groq client
+# Add imports for RAG model approach
+from sentence_transformers import SentenceTransformer
+import numpy as np
+import faiss
+from typing import List, Dict, Tuple, Optional
+import torch
+from tqdm import tqdm
+import gc
+import threading
+import datetime
+from collections import deque
+
+# Rate limiting configuration for Groq API
+RATE_LIMIT_RPM = 30  # Requests per minute
+RATE_LIMIT_RPD = 1000  # Requests per day
+RATE_LIMIT_TPM = 6000  # Tokens per minute
+
+# Rate limiting tracking
+api_calls_minute = deque(maxlen=RATE_LIMIT_RPM)  # Track timestamps of calls in the last minute
+api_calls_day = deque(maxlen=RATE_LIMIT_RPD)  # Track timestamps of calls in the last day
+tokens_minute = deque(maxlen=RATE_LIMIT_TPM)  # Track token usage in the last minute
+api_lock = threading.Lock()  # Lock for thread safety
+daily_reset_time = None  # Time when daily counter was last reset
+
+def reset_daily_counters():
+    """Reset daily API counters at midnight"""
+    global api_calls_day, daily_reset_time
+    with api_lock:
+        api_calls_day.clear()
+        daily_reset_time = datetime.datetime.now().date()
+        print(f"Daily API counters reset at {daily_reset_time}")
+
+def check_rate_limits(est_tokens=200):
+    """
+    Check if we're within rate limits and can make an API call
+    
+    Args:
+        est_tokens (int): Estimated tokens for this request
+        
+    Returns:
+        tuple: (can_proceed, wait_time, reason)
+    """
+    global api_calls_minute, api_calls_day, tokens_minute, daily_reset_time
+    
+    now = datetime.datetime.now()
+    current_date = now.date()
+    
+    # Initialize or reset daily counter if needed
+    if daily_reset_time is None or daily_reset_time < current_date:
+        reset_daily_counters()
+    
+    with api_lock:
+        # Remove expired entries (older than 1 minute)
+        minute_ago = now - datetime.timedelta(minutes=1)
+        while api_calls_minute and api_calls_minute[0] < minute_ago:
+            api_calls_minute.popleft()
+            
+        # Check requests per minute
+        if len(api_calls_minute) >= RATE_LIMIT_RPM:
+            oldest = api_calls_minute[0]
+            wait_time = (oldest + datetime.timedelta(minutes=1) - now).total_seconds()
+            return False, max(wait_time, 0.5), "minute"
+            
+        # Check tokens per minute
+        current_tokens_minute = len(tokens_minute)
+        if current_tokens_minute + est_tokens > RATE_LIMIT_TPM:
+            # Calculate when enough tokens will expire
+            wait_time = 60  # Default wait of 1 minute if cannot calculate precisely
+            return False, wait_time, "tokens"
+            
+        # Check requests per day
+        if len(api_calls_day) >= RATE_LIMIT_RPD:
+            # No more requests allowed today
+            tomorrow = (datetime.datetime.combine(current_date + datetime.timedelta(days=1), 
+                                                  datetime.time(0, 0)) - now).total_seconds()
+            return False, tomorrow, "day"
+        
+        # We're within limits, record this attempt
+        api_calls_minute.append(now)
+        api_calls_day.append(now)
+        # Add estimated tokens to the token counter
+        for _ in range(est_tokens):
+            tokens_minute.append(1)
+            
+        return True, 0, "ok"
+
+def wait_for_rate_limit(est_tokens=200, max_retries=5):
+    """
+    Wait until we're within rate limits to make an API call
+    
+    Args:
+        est_tokens (int): Estimated tokens for this request
+        max_retries (int): Maximum number of retry attempts
+        
+    Returns:
+        bool: Whether the call can proceed
+    """
+    for attempt in range(max_retries):
+        can_proceed, wait_time, reason = check_rate_limits(est_tokens)
+        
+        if can_proceed:
+            return True
+            
+        print(f"Rate limit reached ({reason}). Waiting {wait_time:.1f} seconds before retry.")
+        
+        # If we'd need to wait more than 5 minutes, abort
+        if wait_time > 300:
+            print(f"Wait time too long ({wait_time:.1f} seconds). Aborting.")
+            return False
+            
+        # Wait and try again
+        time.sleep(wait_time)
+    
+    # If we've tried max_retries times and still can't proceed, give up
+    print(f"Failed to get within rate limits after {max_retries} attempts")
+    return False
+
+def record_token_usage(prompt_tokens, completion_tokens):
+    """
+    Record actual token usage after an API call
+    
+    Args:
+        prompt_tokens (int): Number of tokens in the prompt
+        completion_tokens (int): Number of tokens in the completion
+    """
+    global tokens_minute
+    
+    with api_lock:
+        # Remove the estimated tokens we added in check_rate_limits
+        estimated = min(200, len(tokens_minute))
+        for _ in range(estimated):
+            if tokens_minute:
+                tokens_minute.popleft()
+        
+        # Add the actual tokens used
+        total_tokens = prompt_tokens + completion_tokens
+        for _ in range(total_tokens):
+            tokens_minute.append(1)
+            
+    print(f"Recorded token usage: {prompt_tokens} prompt + {completion_tokens} completion = {total_tokens} total")
+
+# Configure Groq API for Qwen QWQ 32B model
+groq_api_key = os.environ.get("GROQ_API_KEY")
+if not groq_api_key:
+    # For development - using the provided API key
+    groq_api_key = "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"
+
+# Initialize Groq client
+client = Groq(api_key=groq_api_key)
+
+# Model configuration - use QWQ 32B model
+groq_qwen_model = "qwen-qwq-32b"  # The Groq model name
+
+# Variable to track if Groq API is available
+groq_available = True
+
+# Global dictionaries for storage
+slide_contents = {}  # Store slide content by session ID
+slide_contents_structured = {}  # Store structured slide content by session ID
+slide_images = {}  # Store image paths by session ID
+session_images = {}  # Store image paths for each session
+chat_sessions = {}  # Store chat history by session ID
+summary_cache = {}  # Cache for summaries to avoid redundant API calls
+
+# RAG Model Configuration
+# Using all-MiniLM-L6-v2 as a lightweight, quantizable embedding model that works well for RAG
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+EMBEDDING_DIMENSION = 384  # Dimension for all-MiniLM-L6-v2
+embedding_model = None
+use_half_precision = True  # Set to True to use FP16 precision (saves memory)
+
+# Dictionary to store FAISS indices for each session
+faiss_indices = {}
+# Dictionary to store slide chunks for each session
+slide_chunks = {}
+# Dictionary to store slide mapping (chunk_id -> slide_num) for each session
+chunk_to_slide_map = {}
+
+def load_embedding_model():
+    """Load the embedding model once and keep it in memory"""
+    global embedding_model
+    
+    if embedding_model is None:
+        print(f"Loading embedding model: {EMBEDDING_MODEL}")
+        try:
+            # Load the model with half precision if available (saves memory)
+            embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+            if use_half_precision and torch.cuda.is_available():
+                embedding_model.half()  # Convert to FP16
+                print("Using half precision (FP16) for embedding model")
+            elif torch.cuda.is_available():
+                print("Using GPU for embedding model")
+                embedding_model.to('cuda')
+            else:
+                print("Using CPU for embedding model")
+                
+        except Exception as e:
+            print(f"Error loading embedding model: {str(e)}")
+            return False
+            
+    return True
+
+def chunk_text(text: str, chunk_size: int = 150, overlap: int = 30) -> List[str]:
+    """Split text into overlapping chunks for better retrieval"""
+    words = text.split()
+    chunks = []
+    
+    if len(words) <= chunk_size:
+        return [text]
+        
+    for i in range(0, len(words), chunk_size - overlap):
+        chunk = " ".join(words[i:i + chunk_size])
+        chunks.append(chunk)
+        if i + chunk_size >= len(words):
+            break
+            
+    return chunks
+
+def create_slide_embeddings(session_id: str, slide_texts: Dict[int, str]):
+    """Create embeddings for slides and build a FAISS index"""
+    global faiss_indices, slide_chunks, chunk_to_slide_map
+    
+    if not load_embedding_model():
+        print("Failed to load embedding model, skipping embeddings creation")
+        return False
+        
+    all_chunks = []
+    slide_map = {}
+    chunk_idx = 0
+    
+    print(f"Creating embeddings for {len(slide_texts)} slides in session {session_id}")
+    
+    # For memory and token efficiency, limit the number of chunks
+    max_chunks_per_slide = 3  # Limit chunks per slide
+    total_chunks_limit = 300  # Overall chunk limit to prevent excessive processing
+    
+    # Process each slide text into chunks
+    for slide_num, text in tqdm(slide_texts.items(), desc="Processing slides"):
+        # Ensure slide_num is an integer
+        slide_num = int(slide_num)
+        
+        # Skip very short texts (likely image-only slides)
+        if len(text.split()) < 20:
+            # Create just one chunk for short texts
+            all_chunks.append(text)
+            slide_map[chunk_idx] = slide_num
+            chunk_idx += 1
+            continue
+        
+        # Create chunks from the slide text
+        slide_chunks_result = chunk_text(text)
+        
+        # Take only the most important chunks (beginning, middle, end)
+        # if we have too many chunks for this slide
+        if len(slide_chunks_result) > max_chunks_per_slide:
+            # Keep first, last, and middle chunk for each slide
+            selected_chunks = []
+            selected_chunks.append(slide_chunks_result[0])  # First chunk
+            
+            if len(slide_chunks_result) > 2:
+                middle_idx = len(slide_chunks_result) // 2
+                selected_chunks.append(slide_chunks_result[middle_idx])  # Middle chunk
+                
+            selected_chunks.append(slide_chunks_result[-1])  # Last chunk
+            slide_chunks_result = selected_chunks
+        
+        # Add each chunk to our collection
+        for chunk in slide_chunks_result:
+            all_chunks.append(chunk)
+            # Map this chunk index back to its slide number
+            slide_map[chunk_idx] = slide_num
+            chunk_idx += 1
+            
+            # If we're exceeding our chunk limit, stop processing
+            if len(all_chunks) >= total_chunks_limit:
+                print(f"Reached chunk limit ({total_chunks_limit}). Stopping chunk creation.")
+                break
+                
+        # Break out of outer loop if we hit the chunk limit
+        if len(all_chunks) >= total_chunks_limit:
+            break
+    
+    if not all_chunks:
+        print("No chunks to process")
+        return False
+    
+    # Process in batches to avoid memory issues
+    batch_size = 50  # Process 50 chunks at a time
+    all_embeddings = []
+    
+    try:
+        print(f"Generating embeddings for {len(all_chunks)} chunks in batches of {batch_size}")
+        
+        for i in range(0, len(all_chunks), batch_size):
+            # Get the current batch
+            batch = all_chunks[i:i + batch_size]
+            
+            # Generate embeddings for the batch
+            print(f"Processing batch {i//batch_size + 1}/{(len(all_chunks)-1)//batch_size + 1}")
+            batch_embeddings = embedding_model.encode(batch, show_progress_bar=False, convert_to_numpy=True)
+            
+            # Add to our collection
+            if i == 0:
+                all_embeddings = batch_embeddings
+            else:
+                all_embeddings = np.vstack((all_embeddings, batch_embeddings))
+                
+            # Clean up to free memory after each batch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        
+        # Normalize embeddings for cosine similarity
+        faiss.normalize_L2(all_embeddings)
+        
+        # Create a FAISS index
+        index = faiss.IndexFlatIP(EMBEDDING_DIMENSION)  # Use inner product (cosine for normalized vectors)
+        index.add(all_embeddings)
+        
+        # Store the index and data for this session
+        faiss_indices[session_id] = index
+        slide_chunks[session_id] = all_chunks
+        chunk_to_slide_map[session_id] = slide_map
+        
+        print(f"Successfully created embeddings and FAISS index for session {session_id}")
+        
+        # Clean up to free memory
+        del all_embeddings
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        return True
+        
+    except Exception as e:
+        print(f"Error creating embeddings: {e}")
+        return False
+
+def retrieve_relevant_chunks(session_id: str, query: str, top_k: int = 3) -> List[Tuple[str, int, float]]:
+    """Retrieve most relevant chunks for a query using vector similarity search"""
+    if session_id not in faiss_indices or not load_embedding_model():
+        print(f"No embeddings found for session {session_id} or model loading failed")
+        return []
+        
+    try:
+        # Generate embedding for the query
+        query_embedding = embedding_model.encode([query], convert_to_numpy=True)
+        
+        # Normalize for cosine similarity
+        faiss.normalize_L2(query_embedding)
+        
+        # Search the index
+        index = faiss_indices[session_id]
+        scores, indices = index.search(query_embedding, top_k)
+        
+        # Get the corresponding chunks and slide numbers
+        results = []
+        for score, idx in zip(scores[0], indices[0]):
+            # Ensure idx is an integer
+            idx = int(idx)
+            if idx >= 0 and idx < len(slide_chunks[session_id]):
+                chunk = slide_chunks[session_id][idx]
+                # Ensure consistent integer key usage for slide number lookup
+                slide_num = chunk_to_slide_map[session_id].get(idx)
+                # Convert slide_num to int if it exists
+                if slide_num is not None:
+                    slide_num = int(slide_num)
+                    
+                # Add to results only if score is above minimum threshold
+                if float(score) > 0.6:  # Increased threshold for higher relevance
+                    results.append((chunk, slide_num, float(score)))
+                
+        return results
+        
+    except Exception as e:
+        print(f"Error retrieving chunks: {e}")
+        return []
+
+def get_context_for_query(session_id: str, query: str, current_slide: Optional[int] = None) -> Tuple[str, List[int]]:
+    """Get the most relevant context for a query, with a bias toward the current slide"""
+    # Weight current slide more heavily if provided
+    if current_slide is not None:
+        # Combine the query with the slide number to bias the search
+        biased_query = f"Slide {current_slide}: {query}"
+        chunks = retrieve_relevant_chunks(session_id, biased_query, top_k=3)  # Reduced from 5 to 3
+    else:
+        chunks = retrieve_relevant_chunks(session_id, query, top_k=3)  # Reduced from 5 to 3
+        
+    if not chunks:
+        return "", []
+        
+    # Combine chunks into context
+    context_parts = []
+    slide_nums = []
+    
+    # Track total context size to avoid excessive token usage
+    max_context_size = 2000  # Limiting total context to ~500 tokens
+    current_context_size = 0
+    
+    for chunk, slide_num, score in chunks:
+        if score < 0.6:  # Increased threshold for relevance
+            continue
+            
+        # Calculate the size of this chunk
+        chunk_size = len(chunk)
+        
+        # If adding this chunk would exceed our limit, skip it
+        if current_context_size + chunk_size > max_context_size:
+            # If this is the first chunk, truncate it instead of skipping
+            if not context_parts:
+                truncated_chunk = chunk[:max_context_size]
+                context_parts.append(f"Slide {slide_num}: {truncated_chunk}")
+                slide_nums.append(slide_num)
+            break
+            
+        # Add this chunk to our context
+        context_parts.append(f"Slide {slide_num}: {chunk}")
+        slide_nums.append(slide_num)
+        current_context_size += chunk_size
+        
+    context = "\n\n".join(context_parts)
+    return context, slide_nums
+
+# Function to check if Groq is available
+def check_groq_availability():
+    """Test if Groq API is available and set the global flag accordingly"""
+    global groq_available
+    
+    print("Checking Groq API availability...")
+    
+    # Start by assuming API is available (optimistic approach)
+    groq_available = True
+    
+    try:
+        # Simple health check with minimal API usage
+        try:
+            # Initialize Groq client
+            client = Groq(api_key=groq_api_key)
+            
+            # Make a very small request to check availability
+            # This counts against our rate limits, so use minimal tokens
+            completion = client.chat.completions.create(
+                model="qwen-qwq-32b",
+                messages=[
+                    {"role": "user", "content": "Hi"}
+                ],
+                max_tokens=1  # Just need to verify the API works
+            )
+            
+            # If we get here, the API is available
+            print("✅ Groq API is available and responding")
+            groq_available = True
+            
+            # Record this minimal usage for rate limiting
+            if hasattr(completion, 'usage') and completion.usage:
+                record_token_usage(completion.usage.prompt_tokens, completion.usage.completion_tokens)
+            else:
+                record_token_usage(1, 1)  # Minimal estimate if usage not provided
+                
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ Groq API check encountered an error: {str(e)}")
+            # We'll still assume it's available until a real request fails
+            return True
+                
+    except Exception as e:
+        print(f"⚠️ Error checking Groq API (but continuing anyway): {str(e)}")
+        # We'll still assume it's available until a real request fails
+        return True
+
+# Create the Flask app
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = 'slides'
+app.config['IMAGE_FOLDER'] = 'static/slide_images'
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB limit
+app.config['SLIDE_DATA'] = {}  # Initialize empty slide data dictionary
+
+# Ensure upload and image folders exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['IMAGE_FOLDER'], exist_ok=True)
+
+# Create placeholder image if it doesn't exist
+placeholder_path = os.path.join(app.root_path, 'static', 'images', 'placeholder.png')
+if not os.path.exists(placeholder_path):
+    print(f"Creating placeholder image at {placeholder_path}")
+    try:
+        # Create a simple placeholder image
+        img = Image.new('RGB', (800, 600), color=(240, 240, 240))
+        draw = ImageDraw.Draw(img)
+        draw.text((400, 300), "Image not available", fill=(100, 100, 100))
+        img.save(placeholder_path)
+    except Exception as e:
+        print(f"Error creating placeholder image: {str(e)}")
+
+# Global variables
+active_session_id = None
+
+def extract_text_from_pdf(pdf_path, session_id):
+    """Extract text from PDF and create a structured dataset for the session"""
+    try:
+        document = fitz.open(pdf_path)
+        print(f"Opened PDF: {pdf_path} with {len(document)} pages")
+        
+        text_content = ""
+        slide_images = []
+        structured_slides = {}  # Dictionary to store structured slide text by slide number
+        
+        # For tracking the session's slide images
+        if session_id not in session_images:
+            session_images[session_id] = []
+        
+        for i, page in enumerate(document):
+            slide_num = i + 1  # 1-indexed slide numbers
+            
+            # Extract text from this page
+            page_text = page.get_text()
+            
+            # Add to the combined text
+            text_content += f"Slide {slide_num}:\n{page_text}\n\n"
+            
+            # Store in structured dictionary for RAG processing
+            structured_slides[slide_num] = page_text
+            
+            # Render page to image for display
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better quality
+            img_data = pix.tobytes("png")
+            
+            # Save image to temp file
+            img_path = tempfile.mktemp(suffix='.png', prefix=f'{session_id}_slide{slide_num}_')
+            with open(img_path, 'wb') as img_file:
+                img_file.write(img_data)
+            
+            # Record image path
+            slide_images.append(img_path)
+            session_images[session_id].append(img_path)
+            
+        document.close()
+        
+        # Store the raw text content
+        slide_contents[session_id] = text_content
+        
+        # Store structured slide content (separate dictionary for each slide)
+        slide_contents_structured[session_id] = structured_slides
+        
+        # Create embeddings for RAG retrieval
+        create_slide_embeddings(session_id, structured_slides)
+        
+        return text_content, slide_images
+        
+    except Exception as e:
+        print(f"Error extracting text from PDF: {str(e)}")
+        raise e
+
+def get_or_create_chat_session(session_id):
+    """Get an existing chat session or create a new one"""
+    # This function is no longer used since we've removed Gemini/Google models
+    # Kept as a placeholder in case code references it
+    return None
+
+# Function to check if a slide is likely just a title slide
+def is_title_slide(slide_text):
+    """Determine if a slide is likely just a title or author slide"""
+    # Remove "Slide X:" prefix if present
+    if "Slide " in slide_text and ":" in slide_text:
+        parts = slide_text.split(":", 1)
+        if len(parts) > 1:
+            content = parts[1].strip()
+        else:
+            content = slide_text
+    else:
+        content = slide_text
+        
+    # Count words after removing the prefix
+    word_count = len(content.split())
+    
+    # Typical patterns for title slides
+    title_patterns = [
+        "agenda", "overview", "introduction", "thank you", "questions",
+        "presented by", "author", "title", "contents", "outline"
+    ]
+    
+    # Check if the content is very short (definitely a title)
+    is_title = (word_count < 10)  # If fewer than 10 words, likely a title slide
+    
+    # Check for common title slide patterns only for short texts
+    if word_count < 25:  # Be more selective about pattern matching for longer content
+        for pattern in title_patterns:
+            if pattern.lower() in content.lower():
+                is_title = True
+                break
+            
+    return is_title
+
+def generate_groq_summary(slide_text, slide_num, session_id=None, surrounding_slides=None, presentation_overview=None, streaming=False):
+    """
+    Generate a slide summary using the Groq API with efficient token usage
+    and minimal context.
+    
+    Args:
+        slide_text (str): The text content of the slide to summarize
+        slide_num (int): The slide number
+        session_id (str, optional): The session ID to enable context sharing
+        surrounding_slides (dict, optional): Context from surrounding slides 
+        presentation_overview (str, optional): Overview of the entire presentation
+        streaming (bool, optional): Whether to stream the response
+        
+    Returns:
+        str or generator: The summary text, or a generator yielding content chunks if streaming
+    """
+    if not slide_text or not slide_text.strip():
+        return "This slide appears to be empty or contains only non-textual elements."
+
+    # Set more efficient token limits
+    MAX_CONTEXT_LENGTH = 6000  # Reduced from 8000 characters
+
+    # Extract title from the slide
+    slide_title = extract_slide_title(slide_text, slide_num)
+
+    # Use surrounding slides if provided, but aggressively limit their size
+    context = ""
+    if surrounding_slides:
+        for context_slide_num, context_text in surrounding_slides.items():
+            # Much shorter neighboring slide context
+            if len(context_text) > 500:
+                # Keep only first ~50 words
+                words = context_text.split()
+                context_text = " ".join(words[:50]) + "..."
+            
+            context_title = extract_slide_title(context_text, context_slide_num)
+            context += f"Slide {context_slide_num} - {context_title}: {context_text}\n\n"
+    
+    # Aggressively truncate presentation overview for token savings
+    overview_context = ""
+    if presentation_overview:
+        # Keep only first 800 chars max - focus on first 2 lines and key bullet points
+        lines = presentation_overview.split('\n')
+        if len(lines) > 2:
+            # Keep first 2 lines and then only bullet points for topics
+            kept_lines = lines[:2]
+            for line in lines[2:]:
+                if line.strip().startswith('-') or line.strip().startswith('*'):
+                    kept_lines.append(line)
+                if len('\n'.join(kept_lines)) > 800:
+                    break
+            overview_context = '\n'.join(kept_lines)
+        else:
+            overview_context = presentation_overview[:800] if len(presentation_overview) > 800 else presentation_overview
+    
+    # Truncate full context if too large
+    combined_context = f"{overview_context}\n\n{context}".strip()
+    if len(combined_context) > MAX_CONTEXT_LENGTH:
+        # Keep more of the overview than the surrounding slides
+        combined_context = combined_context[:MAX_CONTEXT_LENGTH] + "..."
+    
+    # Compact system message to save tokens
+    system_message = "You create clear, concise slide summaries. Focus on key points only. No internal thinking or reasoning."
+    
+    # Optimize prompt based on available context
+    if combined_context:
+        prompt = f"""Summarize Slide {slide_num}: "{slide_title}"
+
+Content: {slide_text}
+
+Context:
+{combined_context}
+
+Create a concise, informative summary focusing only on the main points and key details from the slide content. Do not mention that you're summarizing or include any meta-commentary about your process."""
+    else:
+        # More compact prompt when no context is available
+        prompt = f"""Summarize Slide {slide_num}: "{slide_title}"
+
+Content: {slide_text}
+
+Create a concise, informative summary focusing only on the main points and key details from the slide content. Do not mention that you're summarizing or include any meta-commentary about your process."""
+    
+    # Create the messages for the API call
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        client = Groq(api_key=groq_api_key)
+        
+        # Set parameters based on streaming mode
+        params = {
+            "model": "qwen-qwq-32b",
+            "messages": messages,
+            "temperature": 0.2,
+        }
+        
+        # Set appropriate max_tokens based on streaming mode
+        if streaming:
+            params["max_tokens"] = 800  # Reduced from 1500
+            params["stream"] = True
+        else:
+            params["max_tokens"] = 600  # Reduced from 1000
+        
+        # Make API call
+        response = client.chat.completions.create(**params)
+        
+        if streaming:
+            # Define a generator to process streaming response
+            def generate_summary_stream():
+                chunks = []
+                for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        chunks.append(content)
+                        # Yield each chunk for streaming
+                        yield content
+                
+                # Return the complete summary to store
+                return "".join(chunks)
+                
+            return generate_summary_stream()
+        else:
+            # For non-streaming, return the summary directly
+            summary = response.choices[0].message.content
+            return summary
+            
+    except Exception as e:
+        print(f"Error generating summary with Groq API: {str(e)}")
+        # Provide a basic fallback summary
+        return f"Summary for Slide {slide_num} ({slide_title}): This slide covers content related to {slide_title}."
+
+# Function to generate a more meaningful summary when API models are unavailable
+def generate_basic_summary(slide_text, slide_num):
+    """Generate a more meaningful summary when API models are unavailable"""
+    if is_title_slide(slide_text):
+        # Try to extract title components for title slides
+        title_components = []
+        subtitle = ""
+        author = ""
+        
+        lines = slide_text.split('\n')
+        if len(lines) >= 1:
+            title_components.append(f"**{lines[0].strip()}**")
+        
+        # Look for potential subtitle/author info
+        for line in lines[1:4]:  # Check next few lines
+            line = line.strip()
+            if line and len(line.split()) <= 10:
+                if not subtitle:
+                    subtitle = line
+                elif not author and "by" in line.lower():
+                    author = line
+        
+        summary_parts = [f"**Title Slide** - Main title: {title_components[0]}"]
+        if subtitle:
+            summary_parts.append(f"Subtitle: **{subtitle}**")
+        if author:
+            summary_parts.append(f"Author: **{author}**")
+            
+        return " ".join(summary_parts)
+        
+    words = slide_text.split()
+    
+    # Check for image metadata we added in extract_text_from_pdf
+    has_image_metadata = "[This slide appears to be primarily visual" in slide_text or "[Contains a visual element of size" in slide_text
+    has_embedded_images = "[Contains" in slide_text and "embedded image(s)" in slide_text
+    
+    # Check if slide has minimal text but likely contains images
+    if len(words) <= 10 or has_image_metadata:
+        # For slides with very little text or known image content
+        if has_image_metadata or has_embedded_images:
+            # Extract image dimensions from our metadata
+            image_info = ""
+            dim_match = re.search(r'Contains a visual element of size (\d+)x(\d+)px', slide_text)
+            if not dim_match:
+                dim_match = re.search(r'Contains an image of size (\d+)x(\d+)px', slide_text)
+            
+            if dim_match:
+                width, height = dim_match.groups()
+                image_info = f" The image dimensions are {width}x{height} pixels."
+            
+            # Try to extract what little text is there
+            text_extract = []
+            for line in slide_text.split('\n'):
+                if line.strip() and not line.startswith('[Contains') and not line.startswith('[This slide'):
+                    text_extract.append(line.strip())
+            
+            if text_extract:
+                text_info = f" Visible text includes: **{' | '.join(text_extract[:3])}**"
+            else:
+                text_info = ""
+                
+            return f"**Visual Slide** - This slide appears to be primarily visual with minimal text.{image_info}{text_info}"
+        else:
+            # For slides with just minimal text, extract what's there
+            text_lines = [line.strip() for line in slide_text.split('\n') if line.strip()]
+            text_sample = " | ".join(text_lines[:3])
+            return f"**Minimal Content Slide** - This slide contains brief text: **{text_sample}**"
+    
+    # Extract headings and subheadings (lines that are shorter and may be capitalized)
+    headings = []
+    content_lines = []
+    
+    for line in slide_text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Check if this looks like a heading
+        if len(line.split()) <= 8 and (line.isupper() or line.endswith(':') or any(line.startswith(prefix) for prefix in ['•', '-', '#', '*'])):
+            headings.append(line)
+        else:
+            content_lines.append(line)
+    
+    # Construct a more meaningful summary
+    if headings:
+        # If we have headings, use them to structure the summary
+        main_heading = headings[0] if headings else f"Slide {slide_num}"
+        sub_headings = headings[1:3] if len(headings) > 1 else []
+        
+        summary_parts = [f"**{main_heading}**"]
+        
+        if sub_headings:
+            sub_headings_text = " | ".join([f"**{h}**" for h in sub_headings])
+            summary_parts.append(f"Key points: {sub_headings_text}")
+        
+        # Add some content if available
+        if content_lines:
+            # Try to extract meaningful sentences
+            sentences = []
+            for line in content_lines:
+                parts = line.split('.')
+                for part in parts:
+                    if part.strip() and len(part.strip().split()) > 3:
+                        sentences.append(part.strip())
+            
+            if sentences:
+                content_sample = sentences[0]
+                if len(content_sample) > 100:
+                    content_sample = ' '.join(content_sample.split()[:15]) + "..."
+                summary_parts.append(f"Content includes: {content_sample}")
+        
+        return " ".join(summary_parts)
+    else:
+        # If no clear headings, try to extract key sentences
+        sentences = []
+        for line in content_lines:
+            parts = line.split('.')
+            for part in parts:
+                if part.strip() and len(part.strip().split()) > 3:
+                    sentences.append(part.strip())
+        
+        if sentences:
+            # Use first sentence as main point
+            main_point = sentences[0]
+            if len(main_point) > 100:
+                main_point = ' '.join(main_point.split()[:15]) + "..."
+                
+            # Use next sentences for additional points
+            additional_points = []
+            for s in sentences[1:3]:
+                if s != main_point:
+                    point = s
+                    if len(point) > 80:
+                        point = ' '.join(point.split()[:10]) + "..."
+                    additional_points.append(point)
+            
+            summary = f"**Content Slide** - Main point: **{main_point}**"
+            
+            if additional_points:
+                summary += f" Additional information: {' | '.join(additional_points)}"
+                
+            return summary
+        
+        # Fallback if all extraction fails
+        word_sample = ' '.join(words[:20])
+        return f"**Content Slide** - This slide contains {len(words)} words. Sample content: **{word_sample}...**"
+
+# Function to extract title from slide text
+def extract_slide_title(slide_text, slide_num):
+    """
+    Extract a reasonable title from slide text.
+    
+    Args:
+        slide_text (str): The text content of the slide
+        slide_num (int): The slide number
+        
+    Returns:
+        str: The extracted title or a default title
+    """
+    # Default title
+    default_title = f"Slide {slide_num}"
+    
+    if not slide_text or len(slide_text.strip()) == 0:
+        return default_title
+    
+    # Split the text into lines
+    lines = slide_text.strip().split("\n")
+    
+    # Find the first non-empty line with reasonable length for a title
+    for line in lines:
+        line = line.strip()
+        if line and len(line) > 0:
+            # Title should not be extremely long
+            words = line.split()
+            if 1 <= len(words) <= 10:
+                return line
+            elif len(words) > 10:
+                # If first line is too long, use a shortened version
+                return " ".join(words[:8]) + "..."
+            
+    # If we didn't find a good title, return the default
+    return default_title
+
+# Function to generate a summary locally when API fails
+def generate_local_summary(slide_text, slide_num):
+    """Generate a simple local summary when API is unavailable"""
+    if is_title_slide(slide_text):
+        return "**Title Slide** - This appears to be a title slide."
+        
+    words = slide_text.split()
+    
+    # Check for image metadata we added in extract_text_from_pdf
+    has_image_metadata = "[This slide appears to be primarily visual" in slide_text or "[Contains a visual element of size" in slide_text
+    has_embedded_images = "[Contains" in slide_text and "embedded image(s)" in slide_text
+    
+    # Check if slide has minimal text but likely contains images
+    if len(words) <= 10 or has_image_metadata:
+        # For slides with very little text or known image content
+        if has_image_metadata:
+            # Extract image dimensions from our metadata
+            image_info = ""
+            dim_match = re.search(r'Contains a visual element of size (\d+)x(\d+)px', slide_text)
+            if not dim_match:
+                dim_match = re.search(r'Contains an image of size (\d+)x(\d+)px', slide_text)
+            
+            if dim_match:
+                width, height = dim_match.groups()
+                image_info = f" The image dimensions are {width}x{height} pixels."
+            
+            # Extract embedded image count if available    
+            image_count = ""
+            count_match = re.search(r'Contains (\d+) embedded image\(s\)', slide_text)
+            if count_match:
+                count = count_match.group(1)
+                image_count = f" The slide contains {count} embedded image(s)."
+            
+            # Create enhanced summary for visual slides
+            visible_text = []
+            for w in words[:20]:
+                if not w.startswith('[') and not w.startswith('Slide') and not w == ']':
+                    visible_text.append(w)
+            
+            text_sample = ' '.join(visible_text).strip()
+            if text_sample:
+                return f"**Visual Slide with Text Elements** - This slide contains visual content with some text elements.{image_info}{image_count} The key text includes: **{text_sample}**"
+            else:
+                return f"**Visual Content** - This slide appears to contain primarily visual elements such as images, diagrams, charts, or graphs.{image_info}{image_count} The visual elements likely illustrate important concepts from the presentation."
+        else:
+            # For slides with just minimal text
+            return f"**Slide with Minimal Text** - This slide contains {len(words)} words and may focus on key points or contain visual elements. Text includes: **{' '.join(words)}**"
+    
+    # For slides with substantial text content
+    if len(words) <= 30:
+        # Short text slide - include all content
+        return f"**Concise Content Slide** - This slide presents key information in {len(words)} words: **{' '.join(words)}**"
+    else:
+        # Extract key sentences from longer text
+        sentences = re.split(r'[.!?]+', slide_text)
+        filtered_sentences = []
+        
+        # Process each sentence to extract meaningful ones
+        for sentence in sentences:
+            sentence = sentence.strip()
+            # Skip short or meaningless sentences
+            if len(sentence.split()) > 3 and not sentence.startswith('[') and not sentence.startswith('Slide'):
+                filtered_sentences.append(sentence)
+                if len(filtered_sentences) >= 3:  # Limit to ~3 key sentences
+                    break
+        
+        # Create a summary based on key sentences
+        if filtered_sentences:
+            key_points = '. '.join(filtered_sentences)
+            return f"**Content Slide** - Key points: **{key_points}**."
+        else:
+            # Fallback if sentence extraction fails
+            word_sample = ' '.join(words[:30])
+            return f"**Content Slide** - This slide contains {len(words)} words. Beginning with: **{word_sample}...**"
+
+# Function to generate chat responses using Groq's QWQ 32B model with RAG context
+def generate_groq_chat_response(user_message, session_id=None, current_slide=None):
+    """Generate a chat response using RAG context with Groq's QWQ 32B model"""
+    
+    # Check if Groq is available at all
+    global groq_available
+    if not groq_available:
+        print("Groq API is unavailable. Cannot generate chat response.")
+        return f"I'm sorry, I can't answer your question at the moment. The AI service is temporarily unavailable. Please try again later."
+    
+    # Use active session if none provided
+    if not session_id:
+        session_id = active_session_id
+    
+    # Create messages list for the chat
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant answering questions about presentation slides. Your answers must be direct, concise, and contain ONLY the final answer with NO thinking process or meta-commentary. Never mention how you're approaching the answer."}
+    ]
+    
+    # Get RAG context for the user question
+    context = ""
+    relevant_slides = []
+    
+    if session_id and session_id in faiss_indices:
+        context, relevant_slides = get_context_for_query(session_id, user_message, current_slide)
+        
+    if context:
+            # Add relevant slide numbers to the response
+            slide_info = f"Based on slides: {', '.join([str(num) for num in relevant_slides])}"
+            context_message = f"Here is the relevant content from the presentation:\n\n{context}"
+            messages.append({"role": "system", "content": context_message})
+    
+    # Add user message with stronger instruction to prevent thinking process
+    messages.append({"role": "user", "content": user_message + "\n\nCRITICAL: Provide ONLY the direct answer with NO explanation of your thought process. Do not mention how you arrived at the answer."})
+    
+    # Estimate token count for the request (rough estimation using 4 chars per token)
+    base_tokens = 150  # For system message
+    context_tokens = len(context) // 4 if context else 0
+    user_tokens = len(user_message) // 4
+    est_prompt_tokens = base_tokens + context_tokens + user_tokens
+    est_completion_tokens = 300  # Estimate for completion
+    est_total_tokens = est_prompt_tokens + est_completion_tokens
+    
+    print(f"Estimated token usage for chat: {est_total_tokens} tokens")
+    
+    # Implement retry mechanism for robustness
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempt {attempt+1}: Generating RAG-enhanced chat response with QWQ 32B model")
+            
+            # Check rate limits before making the API call
+            if not wait_for_rate_limit(est_tokens=est_total_tokens, max_retries=2):
+                print("Rate limit would be exceeded. Using local fallback.")
+                fallback_msg = "I'm sorry, but I need to limit my responses right now due to high usage. "
+                fallback_msg += "Please try again in a few minutes or rephrase your question to be more specific."
+                return fallback_msg
+            
+            # Make the API request using the Groq client with better error handling
+            try:
+                # Initialize Groq client
+                client = Groq(api_key=groq_api_key)
+                
+                completion = client.chat.completions.create(
+                    model="qwen-qwq-32b",
+                    messages=messages,
+                    temperature=0.1,  # Very low temperature for more focused responses
+                    max_tokens=500  # Reduced from 700 to save tokens
+                )
+                
+                # Record actual tokens used if available in response
+                if hasattr(completion, 'usage') and completion.usage:
+                    prompt_tokens = completion.usage.prompt_tokens
+                    completion_tokens = completion.usage.completion_tokens
+                    record_token_usage(prompt_tokens, completion_tokens)
+                else:
+                    # If no usage info, use estimates
+                    record_token_usage(est_prompt_tokens, est_completion_tokens)
+                
+                # Enhanced safety checks for completion object
+                if not completion:
+                    raise ValueError("Received empty completion object")
+                
+                if not hasattr(completion, 'choices') or not completion.choices:
+                    raise ValueError("No choices in completion response")
+                    
+                if not completion.choices[0] or not hasattr(completion.choices[0], 'message'):
+                    raise ValueError("Invalid message structure in completion response")
+                
+                # Extract content from the response with safer access
+                content = completion.choices[0].message.content if hasattr(completion.choices[0].message, 'content') else None
+                
+                if not content or content.isspace():
+                    raise ValueError("Empty content in completion response")
+                
+                # We got a valid response
+                print("Chat response generated successfully")
+                
+                # Check if the content starts with thinking process and remove it
+                # Look for patterns that indicate thinking or meta-commentary
+                thinking_patterns = [
+                    r"(?i)Let('s|me|) (me |)think",
+                    r"(?i)Let('s|me|) (me |)see",
+                    r"(?i)I need to",
+                    r"(?i)I'll",
+                    r"(?i)First,",
+                    r"(?i)Looking at",
+                    r"(?i)Based on",
+                    r"(?i)According to",
+                    r"(?i)The slide",
+                    r"(?i)From the",
+                    r"(?i)Okay,"
+                ]
+                
+                # Try to find the end of thinking and start of the actual answer
+                for pattern in thinking_patterns:
+                    match = re.search(pattern, content)
+                    if match:
+                        # Check for subsequent paragraph breaks that might indicate transition to answer
+                        paragraphs = content.split("\n\n")
+                        if len(paragraphs) > 1:
+                            # Remove the first paragraph which is likely thinking
+                            content = "\n\n".join(paragraphs[1:])
+                            break
+                
+                # Add slide reference if we have relevant slides
+                if relevant_slides:
+                    return f"{content}\n\n(Information from slides: {', '.join([str(num) for num in relevant_slides])})"
+                return content
+                
+            except (AttributeError, IndexError, TypeError) as struct_error:
+                # Handle structural errors in the response
+                error_msg = f"API response structure error: {str(struct_error)}"
+                print(error_msg)
+                raise ValueError(error_msg)
+            
+        except Exception as e:
+            print(f"Groq API error: {str(e)}")
+            if attempt < max_retries - 1:
+                print(f"Retrying in 2 seconds... (Attempt {attempt+1}/{max_retries})")
+                time.sleep(2)  # Small delay before retry
+                continue
+            else:
+                # All retries failed
+                print("All retry attempts failed. Returning error message.")
+                return f"I'm sorry, I encountered an error processing your request. Please try again later with a different question."
+    
+    # Should never reach here, but just in case
+    return "I apologize, but I couldn't process your request. Please try again later."
+
+@app.route('/')
+def index():
+    """Render the main page"""
+    return render_template('index.html')
+
+@app.route('/upload', methods=['POST'])
+def upload_slides():
+    """Handle slide upload and processing"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    
+    # Check if the file is a PDF
+    if not file.filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Only PDF files are supported'}), 400
+    
+    try:
+        # Create a unique session ID if not provided
+        session_id = str(uuid.uuid4())
+        
+        # Set as the active session for convenience in development
+        global active_session_id
+        active_session_id = session_id
+    
+        # Save the uploaded file
+        filename = secure_filename(file.filename)
+        upload_dir = os.path.join(tempfile.gettempdir(), 'slide_uploads')
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, f"{session_id}_{filename}")
+        file.save(file_path)
+    
+        # Process the PDF in the background
+        print(f"Processing PDF: {file_path}")
+        
+        # Extract text and render slide images
+        text_content, slide_images = extract_text_from_pdf(file_path, session_id)
+        
+        # Create or update the chat session
+        get_or_create_chat_session(session_id)
+        
+        # Initialize the SLIDE_DATA structure for this session
+        app.config['SLIDE_DATA'][session_id] = {
+            'extraction_data': {
+                'slide_texts': slide_contents_structured.get(session_id, {}),
+            },
+            'slide_summaries': {},
+            'slide_titles': {}
+        }
+        
+        # Count total slides
+        slide_pattern = re.compile(r"Slide\s+(\d+):")
+        slide_matches = slide_pattern.findall(text_content)
+        total_slides = len(slide_matches) if slide_matches else len(slide_images)
+        
+        # Return success with session ID and total slides
+        return jsonify({
+            'success': True, 
+            'message': 'File uploaded and processed successfully',
+            'session_id': session_id,
+            'total_slides': total_slides
+        })
+    
+    except Exception as e:
+        print(f"Error processing uploaded file: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    """Handle chat messages using RAG"""
+    data = request.json
+    user_message = data.get('message', '')
+    session_id = data.get('session_id', active_session_id)
+    current_slide = data.get('current_slide')  # Get current slide number from client
+    
+    # Try to convert current_slide to int if it's provided
+    if current_slide:
+        try:
+            current_slide = int(current_slide)
+        except ValueError:
+            current_slide = None
+    
+    if not session_id or session_id not in slide_contents:
+        return jsonify({'error': 'No slides have been uploaded or session expired'}), 400
+    
+    try:
+        # Use RAG-enhanced chat response
+        response_text = generate_groq_chat_response(
+            user_message, 
+            session_id=session_id, 
+            current_slide=current_slide
+        )
+        
+        return jsonify({'response': response_text})
+    
+    except Exception as e:
+        print(f"Error in chat endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/get_summaries', methods=['GET'])
+def get_summaries():
+    """
+    Generate summaries for multiple slides in a single request using optimized token usage
+    
+    Query parameters:
+        session_id (str): The session ID
+        slide_nums (str): Comma-separated list of slide numbers to summarize
+        force_regenerate (bool, optional): Whether to regenerate summaries even if cached
+        
+    Returns:
+        dict: Mapping of slide numbers to summaries
+    """
+    try:
+        # Get parameters
+        session_id = request.args.get('session_id')
+        slide_nums_param = request.args.get('slide_nums')
+        force_regenerate = request.args.get('force_regenerate', 'false').lower() == 'true'
+        
+        # Validate parameters
+        if not session_id or not slide_nums_param:
+            return jsonify({"error": "Missing required parameters"}), 400
+            
+        # Parse slide numbers
+        try:
+            slide_nums = [int(num.strip()) for num in slide_nums_param.split(',')]
+        except ValueError:
+            return jsonify({"error": "Invalid slide_nums format. Use comma-separated integers."}), 400
+            
+        # Get slide data
+        slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
+        if not slide_data:
+            return jsonify({"error": f"No data found for session {session_id}"}), 404
+            
+        # Check if extraction data exists
+        extraction_data = slide_data.get('extraction_data', {})
+        if not extraction_data:
+            return jsonify({"error": f"No extraction data found for session {session_id}"}), 404
+            
+        # Get slide texts
+        slide_texts = extraction_data.get('slide_texts', {})
+        if not slide_texts:
+            return jsonify({"error": "No slide texts found"}), 404
+            
+        # Initialize slide_summaries if not present
+        if 'slide_summaries' not in slide_data:
+            slide_data['slide_summaries'] = {}
+            
+        # Collect slides that actually need processing
+        slides_to_process = []
+        valid_slide_nums = []
+        
+        for slide_num in slide_nums:
+            str_slide_num = str(slide_num)
+            # Check if the slide exists
+            if str_slide_num not in slide_texts:
+                continue
+                
+            # Skip empty slides
+            slide_text = slide_texts.get(str_slide_num, "")
+            if not slide_text.strip():
+                continue
+                
+            # Check if we need to process this slide
+            if force_regenerate or str_slide_num not in slide_data['slide_summaries']:
+                slides_to_process.append(slide_num)
+            
+            valid_slide_nums.append(slide_num)
+            
+        # If we don't need to process any slides, return cached results
+        if not slides_to_process:
+            result = {}
+            for slide_num in valid_slide_nums:
+                str_slide_num = str(slide_num)
+                if str_slide_num in slide_data['slide_summaries']:
+                    result[slide_num] = slide_data['slide_summaries'][str_slide_num]
+            return jsonify(result)
+            
+        # Process slides that need summarization
+        print(f"Processing {len(slides_to_process)} slides for session {session_id}")
+        
+        # Get or generate presentation overview once for efficiency
+        presentation_overview = None
+        if 'presentation_overview' in slide_data:
+            presentation_overview = slide_data['presentation_overview']
+        else:
+            try:
+                presentation_overview = generate_presentation_overview(session_id)
+            except Exception as e:
+                print(f"Error generating presentation overview: {str(e)}")
+                # Continue without overview
+                
+        # Process each slide
+        results = {}
+        
+        for slide_num in valid_slide_nums:
+            str_slide_num = str(slide_num)
+            
+            # Use cached summary if available and not forcing regeneration
+            if str_slide_num in slide_data['slide_summaries'] and not force_regenerate:
+                results[slide_num] = slide_data['slide_summaries'][str_slide_num]
+                continue
+                
+            # Skip if slide doesn't exist in text data
+            if str_slide_num not in slide_texts:
+                continue
+                
+            # Get the slide text
+            slide_text = slide_texts.get(str_slide_num, "")
+            if not slide_text.strip():
+                continue
+                
+            # Get surrounding slides for context
+            surrounding_slides = {}
+            nearby_slides = [slide_num - 1, slide_num + 1]
+            for nearby_num in nearby_slides:
+                if str(nearby_num) in slide_texts:
+                    neighboring_text = slide_texts[str(nearby_num)]
+                    # Limit context size
+                    if len(neighboring_text) > 300:
+                        words = neighboring_text.split()
+                        neighboring_text = " ".join(words[:30]) + "..."
+                    surrounding_slides[nearby_num] = neighboring_text
+            
+            try:
+                # Generate summary without streaming for batch efficiency
+                summary = generate_groq_summary(
+                    slide_text=slide_text,
+                    slide_num=slide_num,
+                    session_id=session_id,
+                    surrounding_slides=surrounding_slides,
+                    presentation_overview=presentation_overview,
+                    streaming=False
+                )
+                
+                # Store the summary
+                slide_data['slide_summaries'][str_slide_num] = summary
+                results[slide_num] = summary
+                
+            except Exception as e:
+                print(f"Error generating summary for slide {slide_num}: {str(e)}")
+                # Use basic fallback summary
+                basic_summary = generate_basic_summary(slide_text, slide_num)
+                slide_data['slide_summaries'][str_slide_num] = basic_summary
+                results[slide_num] = basic_summary
+                
+        return jsonify(results)
+        
+    except Exception as e:
+        print(f"Error in get_summaries: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/static/<path:path>')
+def serve_static(path):
+    return send_from_directory('static', path)
+
+@app.route('/slide_image/<path:path>')
+def serve_slide_image(path):
+    """Serve slide images with proper error handling"""
+    try:
+        # Check if path exists directly
+        if os.path.exists(path):
+            return send_file(path)
+        
+        # Try looking in the temporary directory
+        temp_path = os.path.join(tempfile.gettempdir(), path)
+        if os.path.exists(temp_path):
+            return send_file(temp_path)
+            
+        # Try with various session prefixes (in case the session ID got separated)
+        sessions = list(session_images.keys())
+        
+        # Try each session prefix
+        for session_id in sessions:
+            # Check if this image belongs to this session
+            for img_path in session_images.get(session_id, []):
+                if path in img_path:
+                    return send_file(img_path)
+        
+        # If we got here, we couldn't find the image
+        print(f"Could not find slide image: {path}")
+        print(f"Available sessions: {list(session_images.keys())}")
+        for session_id in session_images:
+            print(f"Images in session {session_id}: {len(session_images[session_id])}")
+        
+        # Return a placeholder image
+        placeholder_path = os.path.join(app.root_path, 'static', 'images', 'placeholder.png')
+        if os.path.exists(placeholder_path):
+            return send_file(placeholder_path)
+        else:
+            # Create a simple placeholder image
+            img = Image.new('RGB', (800, 600), color=(240, 240, 240))
+            draw = ImageDraw.Draw(img)
+            draw.text((400, 300), "Image not found", fill=(0, 0, 0))
+            
+            img_io = BytesIO()
+            img.save(img_io, 'PNG')
+            img_io.seek(0)
+            
+            return send_file(img_io, mimetype='image/png')
+    
+    except Exception as e:
+        print(f"Error serving slide image {path}: {str(e)}")
+        # Create error image
+        img = Image.new('RGB', (800, 600), color=(240, 240, 240))
+        draw = ImageDraw.Draw(img)
+        draw.text((400, 300), f"Error: {str(e)[:100]}", fill=(255, 0, 0))
+        
+        img_io = BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        
+        return send_file(img_io, mimetype='image/png')
+
+@app.route('/get_slide_images', methods=['POST'])
+def get_slide_images():
+    """Get slide images separate from summary generation"""
+    data = request.json
+    session_id = data.get('session_id')
+    
+    if not session_id or session_id not in session_images:
+        return jsonify({'error': 'No slides have been uploaded or session expired'}), 400
+    
+    try:
+        # Get the slide images for this session
+        images = session_images.get(session_id, [])
+        
+        # Create the image paths to be used by the client
+        image_paths = []
+        for img_path in images:
+            # Use just the filename as the path parameter
+            filename = os.path.basename(img_path)
+            image_paths.append(f"/slide_image/{filename}")
+        
+        return jsonify({
+            'success': True,
+            'slide_image_paths': image_paths,
+            'total_slides': len(image_paths)
+        })
+    except Exception as e:
+        print(f"Error getting slide images: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/stream_summary')
+def stream_summary():
+    """
+    Stream a summary for a specific slide using SSE
+    
+    Query parameters:
+        session_id (str): The session ID
+        slide_num (int): The slide number to summarize
+        force_regenerate (bool, optional): Whether to regenerate the summary even if cached
+    
+    Returns:
+        flask.Response: A streaming response containing summary events
+    """
+    # Get parameters
+    session_id = request.args.get('session_id')
+    slide_num = request.args.get('slide_num')
+    force_regenerate = request.args.get('force_regenerate', 'false').lower() == 'true'
+    
+    # Validate parameters
+    if not session_id or not slide_num:
+        return jsonify({"error": "Missing required parameters"}), 400
+    
+    print(f"Stream summary request for session {session_id}, slide {slide_num}, force_regenerate={force_regenerate}")
+    
+    # Generator function to convert JSON response to SSE format
+    def event_stream():
+        try:
+            for chunk in generate(session_id, slide_num, force_regenerate):
+                # Parse JSON chunk
+                data = json.loads(chunk)
+                
+                # Convert to SSE format based on the keys present
+                if "error" in data:
+                    yield f"event: error\ndata: {data['error']}\n\n"
+                elif "title" in data:
+                    yield f"event: title\ndata: {data['title']}\n\n"
+                elif "progress" in data:
+                    yield f"event: progress\ndata: {data['progress']}\n\n"
+                elif "summary" in data:
+                    yield f"event: summary\ndata: {data['summary']}\n\n"
+                elif "summary_chunk" in data:
+                    yield f"event: chunk\ndata: {data['summary_chunk']}\n\n"
+                elif "complete" in data:
+                    extra = f": {data['error']}" if "error" in data else ""
+                    yield f"event: done\ndata: Summary generation complete{extra}\n\n"
+        except Exception as e:
+            print(f"Error in stream_summary: {str(e)}")
+            yield f"event: error\ndata: Unexpected error: {str(e)}\n\n"
+    
+    # Return streaming response
+    return Response(event_stream(), mimetype="text/event-stream")
+
+# Check Groq API availability on startup
+print("\n" + "="*50)
+print("STUDYMATE INITIALIZATION")
+print("="*50)
+print("Checking Groq QWQ 32B model availability...")
+api_available = check_groq_availability()
+if api_available:
+    print("\n✅ Groq QWQ 32B model is AVAILABLE and READY")
+    print("StudyMate will use the QWQ 32B model for all AI operations.")
+else:
+    print("\n⚠️ Groq QWQ 32B model is UNAVAILABLE")
+    print("StudyMate will use basic fallback processing for summaries and chat.")
+    print("Consider checking your API key or network connection.")
+print("="*50 + "\n")
+
+# Add the generate function definition before the route
+def generate(session_id, slide_num, force_regenerate=False):
+    """
+    Generate a summary for a specific slide with optimized context usage.
+    This function yields each piece of the summary as it's generated.
+    
+    Args:
+        session_id (str): The session ID
+        slide_num (int or str): The slide number to summarize
+        force_regenerate (bool, optional): Whether to regenerate the summary even if cached
+        
+    Yields:
+        str: Each piece of the summary as it's generated
+    """
+    # Validate inputs
+    if not session_id:
+        yield json.dumps({"error": "Missing session_id parameter"})
+        return
+        
+    try:
+        slide_num = int(slide_num)
+    except ValueError:
+        yield json.dumps({"error": "Invalid slide_num parameter"})
+        return
+    
+    # Safely access slide data
+    slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
+    if not slide_data:
+        yield json.dumps({"error": f"No data found for session {session_id}"})
+        return
+    
+    # Check if extraction data exists
+    extraction_data = slide_data.get('extraction_data', {})
+    if not extraction_data:
+        yield json.dumps({"error": f"No extraction data found for session {session_id}"})
+        return
+    
+    # Get slide texts
+    slide_texts = extraction_data.get('slide_texts', {})
+    if not slide_texts:
+        yield json.dumps({"error": "No slide texts found"})
+        return
+    
+    # Validate slide number
+    str_slide_num = str(slide_num)
+    if str_slide_num not in slide_texts:
+        yield json.dumps({"error": f"Slide {slide_num} not found"})
+        return
+    
+    # Get the slide text
+    slide_text = slide_texts.get(str_slide_num, "")
+    if not slide_text.strip():
+        yield json.dumps({"error": f"Slide {slide_num} is empty"})
+        return
+    
+    # Initialize slide_summaries if not present
+    if 'slide_summaries' not in slide_data:
+        slide_data['slide_summaries'] = {}
+    
+    # Check if we already have the summary cached and force_regenerate is False
+    if str_slide_num in slide_data['slide_summaries'] and not force_regenerate:
+        cached_summary = slide_data['slide_summaries'][str_slide_num]
+        print(f"Using cached summary for slide {slide_num}")
+        
+        # First yield the title
+        title = extract_slide_title(slide_text, slide_num)
+        yield json.dumps({"title": title})
+        
+        # Then yield the summary
+        yield json.dumps({"summary": cached_summary})
+        return
+    
+    # Yield progress update
+    yield json.dumps({"progress": "Generating summary..."})
+    
+    # Get surrounding slides for context (limited to closest neighbors)
+    surrounding_slides = {}
+    # Limit to just previous and next slide for token efficiency
+    nearby_slides = [slide_num - 1, slide_num + 1]
+    for nearby_num in nearby_slides:
+        if str(nearby_num) in slide_texts:
+            neighboring_text = slide_texts[str(nearby_num)]
+            # Limit to a smaller excerpt
+            if len(neighboring_text) > 300:
+                words = neighboring_text.split()
+                neighboring_text = " ".join(words[:30]) + "..."
+            surrounding_slides[nearby_num] = neighboring_text
+    
+    # Get or generate presentation overview
+    presentation_overview = None
+    if 'presentation_overview' in slide_data:
+        presentation_overview = slide_data['presentation_overview']
+    else:
+        # Generate it once if not already done
+        try:
+            presentation_overview = generate_presentation_overview(session_id)
+        except Exception as e:
+            print(f"Error generating presentation overview: {str(e)}")
+            # Continue without overview if there's an error
+    
+    # Extract title from the slide text
+    title = extract_slide_title(slide_text, slide_num)
+    yield json.dumps({"title": title})
+    
+    try:
+        # Generate the summary with streaming
+        completion_stream = generate_groq_summary(
+            slide_text=slide_text,
+            slide_num=slide_num,
+            session_id=session_id,
+            surrounding_slides=surrounding_slides,
+            presentation_overview=presentation_overview,
+            streaming=True
+        )
+        
+        # Collect the summary chunks
+        summary_chunks = []
+        
+        # Process the streaming response
+        for chunk in completion_stream:
+            # Skip empty chunks
+            if not chunk:
+                        continue
+                    
+            # Add chunk to collection for later storage
+            summary_chunks.append(chunk)
+            
+            # Yield this chunk
+            yield json.dumps({"summary_chunk": chunk})
+        
+        # Get complete summary
+        complete_summary = "".join(summary_chunks)
+        
+        # Check if we got a valid summary
+        if not complete_summary or len(complete_summary) < 20:
+            print(f"Generated summary for slide {slide_num} is empty or too short, using fallback")
+            # Use non-streaming as fallback
+            complete_summary = generate_groq_summary(
+                slide_text=slide_text,
+                slide_num=slide_num,
+                session_id=session_id,
+                surrounding_slides=surrounding_slides,
+                presentation_overview=presentation_overview,
+                streaming=False
+            )
+        
+        # Store the summary
+        slide_data['slide_summaries'][str_slide_num] = complete_summary
+        
+        # Return completion confirmation
+        yield json.dumps({"complete": True})
+        
+    except Exception as e:
+        print(f"Error in generate function: {str(e)}")
+        error_message = str(e)
+        
+        # Try non-streaming version as fallback
+        try:
+            # Use the non-streaming version as fallback
+            fallback_summary = generate_groq_summary(
+                slide_text=slide_text,
+                slide_num=slide_num,
+                session_id=session_id,
+                surrounding_slides=surrounding_slides,
+                presentation_overview=presentation_overview,
+                streaming=False
+            )
+            
+            # Store the fallback summary
+            slide_data['slide_summaries'][str_slide_num] = fallback_summary
+            
+            # Yield the fallback summary
+            yield json.dumps({"summary": fallback_summary})
+            yield json.dumps({"complete": True})
+            
+        except Exception as fallback_error:
+            # Last resort fallback
+            print(f"Fallback also failed: {str(fallback_error)}")
+            basic_summary = generate_basic_summary(slide_text, slide_num)
+            slide_data['slide_summaries'][str_slide_num] = basic_summary
+            
+            # Yield the basic summary
+            yield json.dumps({"summary": basic_summary})
+            yield json.dumps({"complete": True, "error": str(error_message)})
+
+# Function to generate a presentation overview using RAG
+def generate_presentation_overview(session_id):
+    """
+    Generate a concise overview of the entire presentation that can be used
+    as shared context for individual slide summaries.
+    
+    Args:
+        session_id (str): The session ID
+        
+    Returns:
+        str: The presentation overview
+    """
+    # Check if we already have an overview cached
+    slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
+    
+    # Use a faster memory cache lookup first
+    global_cache_key = f"overview_{session_id}"
+    if global_cache_key in summary_cache:
+        print(f"Using cached presentation overview for {session_id}")
+        return summary_cache[global_cache_key]
+    
+    # Check session data cache
+    if 'presentation_overview' in slide_data:
+        print(f"Using session cached presentation overview for {session_id}")
+        # Add to global cache for faster lookup next time
+        summary_cache[global_cache_key] = slide_data['presentation_overview']
+        return slide_data['presentation_overview']
+    
+    # Get slide texts
+    extraction_data = slide_data.get('extraction_data', {})
+    slide_texts = extraction_data.get('slide_texts', {})
+    
+    if not slide_texts:
+        print("No slide texts found")
+        return ""
+    
+    # Identify key slides (first, last, and some in the middle)
+    slide_nums = sorted([int(k) for k in slide_texts.keys()])
+    if not slide_nums:
+        return ""
+    
+    # Maximum number of slides to use in overview generation (to limit token usage)
+    MAX_KEY_SLIDES = 5
+    
+    # Always include first and last slides
+    key_slides = [slide_nums[0], slide_nums[-1]]
+    
+    # Add middle slide for any presentation
+    if len(slide_nums) > 2:
+        middle = slide_nums[len(slide_nums) // 2]
+        if middle not in key_slides:
+            key_slides.append(middle)
+    
+    # Add additional slides if we have a long presentation (equally spaced)
+    if len(slide_nums) > 10 and len(key_slides) < MAX_KEY_SLIDES:
+        remaining_slots = MAX_KEY_SLIDES - len(key_slides)
+        segment_size = len(slide_nums) // (remaining_slots + 1)
+        for i in range(1, remaining_slots + 1):
+            position = segment_size * i
+            if 0 <= position < len(slide_nums):
+                candidate = slide_nums[position]
+                if candidate not in key_slides:
+                    key_slides.append(candidate)
+    
+    # Sort key slides
+    key_slides = sorted(key_slides)
+    
+    print(f"Generating overview for {session_id} with {len(key_slides)} key slides: {key_slides}")
+    
+    # Extract key slide content with limited token usage
+    MAX_CHARS_PER_SLIDE = 250  # Limit characters per slide to save tokens
+    
+    # First get titles for all slides (lightweight)
+    all_slide_titles = {}
+    for slide_num in slide_nums:
+        slide_text = slide_texts.get(str(slide_num), "")
+        title = extract_slide_title(slide_text, slide_num)
+        all_slide_titles[slide_num] = title
+    
+    # Create quick overview from just titles as fallback
+    toc_overview = f"**Presentation Overview**\n\n"
+    # Add every 3rd title plus first and last
+    for slide_num in slide_nums:
+        if slide_num % 3 == 0 or slide_num == slide_nums[0] or slide_num == slide_nums[-1]:
+            toc_overview += f"- Slide {slide_num}: {all_slide_titles[slide_num]}\n"
+    
+    # Create content from key slides (limited)
+    key_content_parts = []
+    for slide_num in key_slides:
+        slide_text = slide_texts.get(str(slide_num), "")
+        if slide_text:
+            # Limit text length
+            if len(slide_text) > MAX_CHARS_PER_SLIDE:
+                words = slide_text.split()
+                slide_text = " ".join(words[:MAX_CHARS_PER_SLIDE//10]) + "..."  # ~10 chars per word average
+            
+            title = all_slide_titles[slide_num]
+            key_content_parts.append(f"Slide {slide_num} - {title}: {slide_text}")
+    
+    # Join key content
+    key_content = "\n\n".join(key_content_parts)
+    
+    try:
+        # Create ultra-compact prompt for overview generation
+        prompt = f"""
+Create a brief overview of this presentation based on the provided key slides.
+
+KEY SLIDES:
+{key_content}
+
+Format:
+1. One sentence description of the main topic
+2. 3-5 bullet points for key themes
+3. Be extremely concise
+"""
+
+        # Create minimal messages for the API call
+        system_message = "You create extremely concise presentation overviews. Be brief and informative."
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": prompt}
+        ]
+        
+        # API call with minimal tokens
+        client = Groq(api_key=groq_api_key)
+        response = client.chat.completions.create(
+            model="qwen-qwq-32b",
+            messages=messages,
+            temperature=0.1,
+            max_tokens=250  # Minimal tokens for an overview
+        )
+        
+        # Get overview content
+        overview = response.choices[0].message.content
+        
+        # Ensure we start with a heading or bullet
+        if not overview.startswith('#') and not overview.startswith('*') and not overview.startswith('-'):
+            overview = f"# Presentation Overview\n\n{overview}"
+        
+        # Add abbreviated table of contents
+        toc = "\n\n**Key Slides:**\n"
+        for slide_num in key_slides:
+            title = all_slide_titles[slide_num]
+            toc += f"- Slide {slide_num}: {title}\n"
+        
+        overview += toc
+        
+        # Cache the overview
+        slide_data['presentation_overview'] = overview
+        summary_cache[global_cache_key] = overview
+        
+        print(f"Successfully generated overview ({len(overview)} chars)")
+        return overview
+        
+    except Exception as e:
+        print(f"Error generating overview: {str(e)}. Using fallback.")
+        # Always return the fallback TOC if API call fails
+        return toc_overview
+
+# Run the app
+if __name__ == '__main__':
+    app.run(debug=True, port=5002)

@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sumora</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Add Bootstrap for better styling -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Add Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            /* New color palette based on #e1c1a5 */
+            --primary-color: #e1c1a5; /* Logo color */
+            --primary-dark: #c8a68a; /* Darker shade of primary */
+            --primary-light: #f0d4be; /* Lighter shade of primary */
+            --accent-color: #8a664c; /* Complementary brown */
+            --text-color: #4a3c32; /* Dark brown for text */
+            --dark-bg: #2d2520; /* Dark brown background */
+            --dark-card: #3a322b; /* Slightly lighter dark */
+            --dark-text: #e5d6c9; /* Light beige for dark mode text */
+            --light-bg: #f8f4f0; /* Very light beige background */
+            --light-text: #8a7a6d; /* Medium brown for light text */
+            --success-color: #7fbc8c; /* Muted green */
+            --warning-color: #e0b973; /* Muted gold */
+            --danger-color: #d67f76; /* Muted red */
+            --glass-bg: rgba(255, 255, 255, 0.7); /* Glass background for light mode */
+            --glass-bg-dark: rgba(45, 37, 32, 0.75); /* Glass background for dark mode */
+            --glass-border: rgba(255, 255, 255, 0.2); /* Glass border for light mode */
+            --glass-border-dark: rgba(255, 255, 255, 0.1); /* Glass border for dark mode */
+            --accent-text-light: #4a3c32; /* For bold text in light mode */
+            --accent-text-dark: #f0d4be; /* For bold text in dark mode */
+        }
+        
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: var(--light-bg);
+            color: var(--text-color);
+            transition: background-color 0.3s ease, color 0.3s ease;
+            background-image: url('https://www.transparenttextures.com/patterns/cubes.png');
+            min-height: 100vh;
+            position: relative;
+            padding-bottom: 60px; /* Space for footer */
+        }
+        
+        body.dark-mode {
+            background-color: var(--dark-bg);
+            color: var(--dark-text);
+            background-image: url('https://www.transparenttextures.com/patterns/dark-geometric.png');
+        }
+        
+        body.dark-mode .card {
+            background-color: var(--dark-card);
+            border-color: #333;
+        }
+        
+        body.dark-mode .card-body,
+        body.dark-mode .summary-panel,
+        body.dark-mode .bot-message .message-bubble {
+            background-color: var(--dark-card);
+            color: var(--dark-text);
+        }
+        
+        body.dark-mode .chat-container {
+            background-color: rgba(30, 30, 30, 0.8);
+            color: var(--dark-text);
+        }
+        
+        body.dark-mode #slide-summary,
+        body.dark-mode #slide-title {
+            color: var(--dark-text);
+        }
+        
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 600;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--primary-dark);
+            border-color: var(--primary-dark);
+        }
+        
+        .card {
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(226, 193, 165, 0.15);
+            overflow: hidden;
+            transition: all 0.3s ease;
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--glass-border);
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(226, 193, 165, 0.2);
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+            color: white;
+            border-bottom: none;
+        }
+        
+        .upload-area {
+            background-color: white;
+            border: 2px dashed var(--light-text) !important;
+            border-radius: 16px !important;
+            transition: all 0.3s ease;
+        }
+        
+        .upload-area:hover {
+            border-color: var(--primary-color) !important;
+            background-color: rgba(74, 107, 250, 0.05);
+        }
+        
+        #results-section {
+            height: calc(100vh - 60px);
+            max-height: 100%;
+            min-height: 600px;
+            margin-bottom: 0;
+            padding-bottom: 60px; /* Space for footer */
+            overflow-y: auto;
+        }
+        
+        .slide-viewer {
+            background-color: #e9ecef;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            height: 500px; /* Fixed height */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        body.dark-mode .slide-viewer {
+            background-color: #333;
+        }
+        
+        .slide-img {
+            width: 100%;
+            object-fit: contain;
+            background-color: white;
+        }
+        
+        .slide-navigation-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            z-index: 100;
+        }
+        
+        .nav-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background-color: rgba(255, 255, 255, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .nav-btn:hover {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .thumbnail-container {
+            overflow-x: auto;
+            white-space: nowrap;
+            padding: 10px 0;
+            scrollbar-width: thin;
+        }
+        
+        .thumbnail {
+            display: inline-block;
+            width: 120px;
+            height: 67px;
+            margin-right: 10px;
+            border: 2px solid transparent;
+            border-radius: 4px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        
+        .thumbnail.active {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(74, 107, 250, 0.5);
+        }
+        
+        .thumbnail img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .summary-panel {
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            transition: background-color 0.3s ease;
+            border: 1px solid var(--glass-border);
+            height: 400px; /* Fixed height */
+            max-height: 400px; /* Max height to prevent stretching */
+            overflow-y: auto; /* Add scroll when needed */
+            margin-bottom: 1rem;
+        }
+        
+        body.dark-mode .summary-panel {
+            background-color: var(--glass-bg-dark);
+            border-color: var(--glass-border-dark);
+        }
+        
+        /* Fix for the blue bold text in dark mode */
+        body.dark-mode .summary-panel strong,
+        body.dark-mode .message-bubble strong {
+            color: var(--accent-text-dark);
+            font-weight: 600;
+        }
+        
+        .chat-container {
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 12px;
+            height: 150px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            transition: background-color 0.3s ease;
+            border: 1px solid var(--glass-border);
+            max-height: 150px;
+        }
+        
+        body.dark-mode .chat-container {
+            background-color: var(--glass-bg-dark);
+            border-color: var(--glass-border-dark);
+        }
+        
+        .message-bubble {
+            border-radius: 18px;
+            padding: 12px 16px;
+            margin-bottom: 10px;
+            max-width: 85%;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+            transition: background-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .user-message .message-bubble {
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        
+        .bot-message .message-bubble {
+            background-color: white;
+            border-bottom-left-radius: 4px;
+            transition: background-color 0.3s ease;
+        }
+        
+        body.dark-mode .bot-message .message-bubble {
+            background-color: var(--dark-card);
+            color: var(--dark-text);
+            border-bottom-left-radius: 4px;
+        }
+        
+        .system-message .message-bubble {
+            background-color: rgba(74, 107, 250, 0.1);
+            color: var(--primary-color);
+            width: 100%;
+            text-align: center;
+            border-radius: 8px;
+        }
+        
+        .badge {
+            font-weight: 500;
+            padding: 6px 10px;
+            border-radius: 6px;
+        }
+        
+        .badge-slide {
+            background-color: var(--primary-color);
+        }
+        
+        .badge-total {
+            background-color: var(--primary-dark);
+        }
+        
+        .slide-info {
+            padding: 10px 15px;
+            background-color: rgba(74, 107, 250, 0.05);
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        
+        /* Top app bar - glassmorphism */
+        .app-bar {
+            position: sticky;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            transition: all 0.3s ease;
+            border-bottom: 1px solid var(--glass-border);
+        }
+        
+        body.dark-mode .app-bar {
+            background-color: var(--glass-bg-dark);
+            border-color: var(--glass-border-dark);
+        }
+        
+        .range-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .theme-toggle {
+            position: relative;
+            width: 60px;
+            height: 30px;
+            border-radius: 15px;
+            background-color: #ddd;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        
+        .theme-toggle.active {
+            background-color: var(--primary-dark);
+        }
+        
+        .toggle-handle {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background-color: white;
+            transition: transform 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #FFD700;
+        }
+        
+        .theme-toggle.active .toggle-handle {
+            transform: translateX(30px);
+            background-color: #333;
+            color: white;
+        }
+        
+        .right-actions {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background-color: var(--light-text);
+            border-radius: 50%;
+            animation: typing 1s infinite ease-in-out;
+        }
+        
+        .typing-indicator span:nth-child(1) {
+            animation-delay: 0s;
+        }
+        
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes typing {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-5px);
+            }
+        }
+        
+        /* Loading overlay for images */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        
+        body.dark-mode .loading-overlay {
+            background-color: rgba(30, 30, 30, 0.7);
+        }
+        
+        /* Improved placeholder styles */
+        .slide-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #f8f9fa;
+            color: #6c757d;
+            font-size: 0.9rem;
+            text-align: center;
+            padding: 1rem;
+            border-radius: 8px;
+        }
+        
+        body.dark-mode .slide-placeholder {
+            background-color: #2d3748;
+            color: #a0aec0;
+        }
+        
+        /* Enhanced loading indicators */
+        .loading-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            padding: 1rem;
+            text-align: center;
+        }
+        
+        .loading-indicator .progress {
+            width: 100%;
+            max-width: 200px;
+            height: 4px;
+            margin-top: 0.5rem;
+            background-color: rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            border-radius: 2px;
+        }
+        
+        .loading-indicator .progress-bar {
+            height: 100%;
+            background-color: var(--primary-color);
+            animation: loading-progress 2s infinite;
+        }
+        
+        @keyframes loading-progress {
+            0% { width: 0%; }
+            50% { width: 70%; }
+            100% { width: 100%; }
+        }
+        
+        /* Markdown formatting styles */
+        .message-bubble strong, .summary-panel strong {
+            font-weight: 700;
+        }
+        
+        .message-bubble em, .summary-panel em {
+            font-style: italic;
+        }
+        
+        .message-bubble code, .summary-panel code {
+            background-color: #f0f0f0;
+            border-radius: 3px;
+            padding: 2px 4px;
+        }
+        
+        body.dark-mode .message-bubble code, 
+        body.dark-mode .summary-panel code {
+            background-color: #444;
+            color: #f8f8f8;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+        
+        /* Logo styling */
+        .logo-img {
+            object-fit: contain;
+            transition: all 0.2s ease;
+        }
+        
+        /* Footer styling - fixed to bottom */
+        .footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-top: 1px solid var(--glass-border);
+            color: var(--text-color);
+            font-size: 0.9rem;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        body.dark-mode .footer {
+            background-color: var(--glass-bg-dark);
+            color: var(--dark-text);
+            border-top: 1px solid var(--glass-border-dark);
+        }
+        
+        /* Mobile Responsiveness */
+        @media (max-width: 992px) {
+            /* Hide desktop header and show mobile header */
+            .app-bar {
+                display: none;
+            }
+            
+            .mobile-header {
+                display: block; /* Show on mobile devices */
+            }
+            
+            #results-section {
+                height: auto;
+                min-height: 100vh;
+                padding-bottom: 80px; /* More space for footer on mobile */
+            }
+            
+            .slide-info {
+                flex-direction: column;
+            }
+            
+            .slide-controls {
+                margin-top: 10px;
+                width: 100%;
+            }
+            
+            .slide-controls .input-group {
+                width: 100%;
+            }
+            
+            /* Adjust slide thumbnails for smaller screens */
+            .thumbnail {
+                width: 100px;
+                height: 56px;
+            }
+            
+            /* Ensure chat input is usable on mobile */
+            .input-group {
+                width: 100%;
+            }
+            
+            /* Improve mobile glassmorphism elements */
+            .card, .summary-panel, .chat-container {
+                backdrop-filter: blur(8px);
+                -webkit-backdrop-filter: blur(8px);
+            }
+        }
+        
+        /* Small mobile screens */
+        @media (max-width: 576px) {
+            .card-header h4 {
+                font-size: 1rem;
+            }
+            
+            .thumbnail {
+                width: 80px;
+                height: 45px;
+            }
+            
+            /* Make chat interface more compact */
+            .chat-container {
+                height: 120px;
+            }
+            
+            /* Make summary panel scroll properly on small screens */
+            .summary-panel {
+                max-height: 250px;
+            }
+            
+            /* Ensure slide image is properly contained */
+            .slide-img {
+                max-height: 50vh;
+            }
+            
+            /* Adjust footer for small screens */
+            .footer {
+                padding: 5px;
+                height: 50px;
+            }
+            
+            /* Better spacing on mobile */
+            body {
+                padding-bottom: 50px;
+            }
+            
+            /* Reduce blur on mobile for better performance */
+            .glass, .card, .summary-panel, .chat-container, .app-bar, .mobile-header, .footer {
+                backdrop-filter: blur(5px);
+                -webkit-backdrop-filter: blur(5px);
+            }
+        }
+        
+        /* Mobile header - with glassmorphism */
+        .mobile-header {
+            display: none; /* Hidden by default on desktop */
+            position: sticky;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            padding: 8px 12px;
+            transition: all 0.3s ease;
+            border-bottom: 1px solid var(--glass-border);
+        }
+        
+        body.dark-mode .mobile-header {
+            background-color: var(--glass-bg-dark);
+            border-color: var(--glass-border-dark);
+        }
+        
+        .mobile-header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .mobile-header-title {
+            display: flex;
+            align-items: center;
+            font-size: 1rem;
+            font-weight: 600;
+            font-family: 'Montserrat', sans-serif;
+        }
+        
+        .mobile-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .mobile-theme-toggle {
+            width: 44px;
+            height: 22px;
+            border-radius: 11px;
+            background-color: #ddd;
+            cursor: pointer;
+            position: relative;
+            transition: background-color 0.3s ease;
+        }
+        
+        .mobile-theme-toggle.active {
+            background-color: var(--primary-dark);
+        }
+        
+        .mobile-toggle-handle {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background-color: white;
+            transition: transform 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: #FFD700;
+        }
+        
+        .mobile-theme-toggle.active .mobile-toggle-handle {
+            transform: translateX(22px);
+            background-color: #333;
+            color: white;
+        }
+        
+        .mobile-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 5px;
+            margin-top: 5px;
+            border-top: 1px solid rgba(0,0,0,0.05);
+        }
+        
+        body.dark-mode .mobile-controls {
+            border-top-color: rgba(255,255,255,0.05);
+        }
+        
+        .mobile-slide-info {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .mobile-nav-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .mobile-nav-btn {
+            border: none;
+            background-color: rgba(74, 107, 250, 0.1);
+            color: var(--primary-color);
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        
+        .mobile-nav-btn:hover {
+            background-color: rgba(74, 107, 250, 0.2);
+        }
+        
+        .mobile-nav-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .mobile-goto {
+            display: flex;
+            align-items: center;
+            position: relative;
+            width: 32px;
+            height: 30px;
+            overflow: hidden;
+            transition: width 0.3s ease;
+        }
+        
+        .mobile-goto.expanded {
+            width: 90px;
+        }
+        
+        .mobile-goto-btn {
+            position: absolute;
+            right: 0;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            width: 32px;
+            height: 30px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 2;
+        }
+        
+        .mobile-goto-input {
+            position: absolute;
+            left: 0;
+            width: 60px;
+            height: 30px;
+            border: 1px solid var(--primary-color);
+            border-radius: 4px;
+            padding: 0 5px;
+            font-size: 0.8rem;
+            text-align: center;
+        }
+        
+        .mobile-range {
+            margin-top: 5px;
+            padding-top: 5px;
+            border-top: 1px solid rgba(0,0,0,0.05);
+            display: none; /* Hidden by default, toggled by JS */
+        }
+        
+        body.dark-mode .mobile-range {
+            border-top-color: rgba(255,255,255,0.05);
+        }
+        
+        .mobile-range.visible {
+            display: block;
+        }
+        
+        .mobile-range-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .mobile-range-label {
+            font-size: 0.8rem;
+            color: var(--light-text);
+        }
+        
+        .mobile-range-inputs {
+            display: flex;
+            align-items: center;
+            flex-grow: 1;
+            gap: 5px;
+        }
+        
+        .mobile-range-input {
+            width: 100%;
+            height: 30px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 0 5px;
+            font-size: 0.8rem;
+            text-align: center;
+        }
+        
+        .mobile-range-submit {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            height: 30px;
+            padding: 0 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            cursor: pointer;
+        }
+        
+        /* Modify the logo in the header to be bigger */
+        .app-bar .logo-img {
+            height: 50px !important; /* Make logo bigger in desktop header */
+        }
+        
+        .logo-container {
+            padding: 2px !important;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Make mobile logo bigger too */
+        .mobile-header .logo-img {
+            height: 40px !important;
+        }
+        
+        /* Improve the Upload New button to match design */
+        #back-to-upload-btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        #back-to-upload-btn:hover {
+            background-color: var(--primary-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 3px 6px rgba(0, 0, 0, 0.15);
+        }
+        
+        body.dark-mode #back-to-upload-btn {
+            background-color: var(--primary-dark);
+            color: white;
+        }
+        
+        /* Logo container styling */
+        .logo-container {
+            background-color: transparent !important;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08) !important;
+            transition: all 0.3s ease;
+        }
+        
+        .logo-container:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
+        }
+        
+        body.dark-mode .logo-container {
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2) !important;
+        }
+        
+        /* Regenerate button styling */
+        #regenerate-summary {
+            background-color: var(--primary-light);
+            color: var(--accent-color);
+            border: none;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            padding: 4px 8px;
+            transition: all 0.2s ease;
+        }
+        
+        #regenerate-summary:hover {
+            background-color: var(--primary-color);
+            color: white;
+            transform: translateY(-1px);
+        }
+        
+        body.dark-mode #regenerate-summary {
+            background-color: var(--dark-card);
+            color: var(--primary-light);
+            border: 1px solid var(--primary-light);
+        }
+        
+        body.dark-mode #regenerate-summary:hover {
+            background-color: var(--primary-dark);
+            color: var(--dark-text);
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <!-- Upload Section -->
+        <div id="upload-section">
+            <div class="container-fluid py-4">
+                <div class="row justify-content-center">
+                    <div class="col-md-8 col-lg-6">
+                        <div class="card shadow">
+                            <div class="card-header p-4">
+                                <h2 class="mb-0 text-center">
+                                    <div class="logo-container p-2 rounded shadow-sm d-inline-block">
+                                        <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="logo-img me-2" height="60">
+                                    </div>
+                                </h2>
+                            </div>
+                            <div class="card-body p-5">
+                                <div class="text-center mb-4">
+                                    <h3>Upload Your Presentation</h3>
+                                    <p class="text-muted">Upload your slides (PDF format) for AI-powered analysis and summaries</p>
+                                </div>
+                                
+                                <form id="upload-form" enctype="multipart/form-data">
+                                    <div class="mb-4 text-center">
+                                        <label for="slide-file" class="form-label d-block">
+                                            <div class="upload-area p-5 border border-2 border-dashed rounded-3 cursor-pointer">
+                                                <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
+                                                <p>Drag & drop your PDF file here<br>or click to browse</p>
+                                            </div>
+                                        </label>
+                                        <input type="file" class="form-control d-none" id="slide-file" name="file" accept=".pdf">
+                                        <div id="file-name" class="mt-2 text-muted"></div>
+                                    </div>
+                                    
+                                    <div class="text-center">
+                                        <button type="submit" class="btn btn-primary btn-lg px-5 py-2">
+                                            <i class="fas fa-upload me-2"></i>Upload & Analyze
+                                        </button>
+                                    </div>
+                                </form>
+                                
+                                <div id="upload-status" class="alert mt-4 text-center" style="display: none;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Results Section (Google Slides Style) -->
+        <div id="results-section" style="display: none;">
+            <!-- Desktop Header - Original Design -->
+            <div class="app-bar mb-3">
+                <div class="left-section">
+                    <div class="logo-container p-2 rounded shadow-sm">
+                        <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="logo-img me-2" height="45">
+                    </div>
+                </div>
+                <div class="range-selector">
+                    <label for="slide-range-start">Show slides</label>
+                    <input type="number" id="slide-range-start" class="form-control form-control-sm" style="width: 60px;" min="1" value="1">
+                    <span>to</span>
+                    <input type="number" id="slide-range-end" class="form-control form-control-sm" style="width: 60px;" min="1" value="10">
+                    <button id="apply-range-btn" class="btn btn-sm btn-primary">Apply</button>
+                </div>
+                <div class="right-actions">
+                    <button id="back-to-upload-btn" class="btn">
+                        <i class="fas fa-arrow-left me-1"></i>Upload New
+                    </button>
+                    <div class="d-flex align-items-center">
+                        <div id="theme-toggle" class="theme-toggle">
+                            <div class="toggle-handle">
+                                <i class="fas fa-sun"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Mobile Header -->
+            <div class="mobile-header">
+                <div class="mobile-header-top">
+                    <div class="mobile-header-title">
+                        <div class="logo-container p-1 rounded shadow-sm me-2">
+                            <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="logo-img" height="35">
+                        </div>
+                    </div>
+                    <div class="mobile-header-actions">
+                        <button id="mobile-range-toggle" class="mobile-nav-btn">
+                            <i class="fas fa-sliders-h"></i>
+                        </button>
+                        <button id="mobile-back-btn" class="mobile-nav-btn">
+                            <i class="fas fa-arrow-left"></i>
+                        </button>
+                        <div id="mobile-theme-toggle" class="mobile-theme-toggle">
+                            <div class="mobile-toggle-handle">
+                                <i class="fas fa-sun"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mobile-controls">
+                    <div class="mobile-slide-info">
+                        <span class="badge badge-slide" id="mobile-current-slide">1</span>
+                        <span class="badge badge-total" id="mobile-total-slides">/ 10</span>
+                    </div>
+                    <div class="mobile-nav-controls">
+                        <button id="mobile-prev-slide" class="mobile-nav-btn">
+                            <i class="fas fa-chevron-left"></i>
+                        </button>
+                        <div id="mobile-goto" class="mobile-goto">
+                            <input type="number" id="mobile-goto-input" class="mobile-goto-input" min="1">
+                            <button id="mobile-goto-btn" class="mobile-goto-btn">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                        <button id="mobile-next-slide" class="mobile-nav-btn">
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="mobile-range" class="mobile-range">
+                    <div class="mobile-range-container">
+                        <span class="mobile-range-label">Range:</span>
+                        <div class="mobile-range-inputs">
+                            <input type="number" id="mobile-range-start" class="mobile-range-input" min="1" value="1">
+                            <span>to</span>
+                            <input type="number" id="mobile-range-end" class="mobile-range-input" min="1" value="10">
+                        </div>
+                        <button id="mobile-range-submit" class="mobile-range-submit">Apply</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="container-fluid">
+                <div class="row g-4">
+                    <!-- Left Column: Slide Viewer -->
+                    <div class="col-lg-8">
+                        <div class="card shadow h-100">
+                            <div class="card-header p-3 d-flex justify-content-between align-items-center">
+                                <h4 class="mb-0"><i class="fas fa-presentation me-2"></i>Slide View</h4>
+                            </div>
+                            <div class="card-body p-0 d-flex flex-column">
+                                <!-- Main Slide Viewer -->
+                                <div class="slide-viewer flex-grow-1 p-3">
+                                    <div class="d-flex align-items-center justify-content-center h-100">
+                                        <div class="position-relative" style="width: 100%; height: 100%;">
+                                            <div id="current-slide" class="d-flex align-items-center justify-content-center h-100">
+                                                <div class="text-center p-5">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                    <p class="mt-3">Loading slides...</p>
+                                                </div>
+                                            </div>
+                                            <div class="slide-navigation-controls">
+                                                <button id="prev-slide" class="nav-btn">
+                                                    <i class="fas fa-chevron-left"></i>
+                                                </button>
+                                                <button id="next-slide" class="nav-btn">
+                                                    <i class="fas fa-chevron-right"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Thumbnail Navigation -->
+                                <div class="border-top p-2">
+                                    <div class="thumbnail-container" id="slide-thumbnails">
+                                        <!-- Thumbnails will be added here by JavaScript -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Right Column: Summary and Chat -->
+                    <div class="col-lg-4">
+                        <div class="card shadow h-100">
+                            <div class="card-header p-3">
+                                <h4 class="mb-0"><i class="fas fa-brain me-2"></i>AI Analysis</h4>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="d-flex flex-column h-100">
+                                    <!-- Summary Section -->
+                                    <div class="p-3 flex-grow-1 d-flex flex-column">
+                                        <div class="slide-info d-flex justify-content-between flex-wrap">
+                                            <div>
+                                                <span class="badge badge-slide" id="current-slide-num">Slide 1</span>
+                                                <span class="badge badge-total" id="total-slides">of 10</span>
+                                            </div>
+                                            <div class="slide-controls">
+                                                <div class="input-group input-group-sm" style="width: 150px;">
+                                                    <input type="number" id="goto-slide" class="form-control" placeholder="Go to slide" min="1">
+                                                    <button id="goto-btn" class="btn btn-primary btn-sm">
+                                                        <i class="fas fa-arrow-right"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="summary-panel mb-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                                <h5 class="mb-0" id="slide-title">Slide Title</h5>
+                                                <button id="regenerate-summary" class="btn btn-sm" title="Regenerate Summary">
+                                                    <i class="fas fa-redo-alt"></i> Regenerate
+                                                </button>
+                                            </div>
+                                            <div id="slide-summary">
+                                                <div class="text-center p-4">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                    <p class="mt-3">Generating summary...</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Chat Section -->
+                                        <div class="p-3 border-top mt-auto">
+                                            <h5 class="mb-2 fs-6 fs-md-5"><i class="fas fa-comments text-primary me-2"></i>Ask about this slide</h5>
+                                            
+                                            <div id="chat-messages" class="chat-container mb-3">
+                                                <div class="system-message">
+                                                    <div class="message-bubble">
+                                                        <p class="mb-0">Hello! Ask me anything about this slide or the entire presentation.</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="input-group">
+                                                <input type="text" id="user-input" class="form-control" placeholder="Ask a question...">
+                                                <button id="send-btn" class="btn btn-primary">
+                                                    <i class="fas fa-paper-plane"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="container text-center py-3">
+                <p class="mb-0">Sumora by Kauzway.ai</p>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/static/js/script.js"></script>
+    <script>
+        // Mobile header functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            // Theme toggle sync between desktop and mobile
+            const desktopThemeToggle = document.getElementById('theme-toggle');
+            const mobileThemeToggle = document.getElementById('mobile-theme-toggle');
+            
+            // Sync desktop theme toggle to mobile
+            mobileThemeToggle.addEventListener('click', function() {
+                mobileThemeToggle.classList.toggle('active');
+                
+                // Sync with desktop toggle
+                if (mobileThemeToggle.classList.contains('active') !== desktopThemeToggle.classList.contains('active')) {
+                    desktopThemeToggle.click(); // Trigger the desktop toggle click event
+                }
+            });
+            
+            // Range toggle functionality for mobile
+            const mobileRangeToggle = document.getElementById('mobile-range-toggle');
+            const mobileRange = document.getElementById('mobile-range');
+            
+            mobileRangeToggle.addEventListener('click', function() {
+                mobileRange.classList.toggle('visible');
+                mobileRangeToggle.classList.toggle('active');
+                
+                // Add highlight effect for toggle button
+                if (mobileRangeToggle.classList.contains('active')) {
+                    mobileRangeToggle.style.backgroundColor = 'rgba(74, 107, 250, 0.2)';
+                } else {
+                    mobileRangeToggle.style.backgroundColor = 'rgba(74, 107, 250, 0.1)';
+                }
+            });
+            
+            // Sync slide range inputs between desktop and mobile
+            const desktopRangeStart = document.getElementById('slide-range-start');
+            const desktopRangeEnd = document.getElementById('slide-range-end');
+            const mobileRangeStart = document.getElementById('mobile-range-start');
+            const mobileRangeEnd = document.getElementById('mobile-range-end');
+            const desktopApplyBtn = document.getElementById('apply-range-btn');
+            const mobileApplyBtn = document.getElementById('mobile-range-submit');
+            
+            // Sync desktop to mobile
+            desktopRangeStart.addEventListener('change', function() {
+                mobileRangeStart.value = desktopRangeStart.value;
+            });
+            
+            desktopRangeEnd.addEventListener('change', function() {
+                mobileRangeEnd.value = desktopRangeEnd.value;
+            });
+            
+            // Sync mobile to desktop
+            mobileRangeStart.addEventListener('change', function() {
+                desktopRangeStart.value = mobileRangeStart.value;
+            });
+            
+            mobileRangeEnd.addEventListener('change', function() {
+                desktopRangeEnd.value = mobileRangeEnd.value;
+            });
+            
+            // Make mobile apply button trigger desktop apply button
+            mobileApplyBtn.addEventListener('click', function() {
+                desktopApplyBtn.click();
+                // Hide range selector after applying
+                mobileRange.classList.remove('visible');
+                mobileRangeToggle.classList.remove('active');
+                mobileRangeToggle.style.backgroundColor = 'rgba(74, 107, 250, 0.1)';
+            });
+            
+            // Sync mobile slide indicators with desktop
+            const mobileCurrentSlide = document.getElementById('mobile-current-slide');
+            const mobileTotalSlides = document.getElementById('mobile-total-slides');
+            const desktopCurrentSlide = document.getElementById('current-slide-num');
+            const desktopTotalSlides = document.getElementById('total-slides');
+            
+            // Function to update mobile slide indicators
+            function updateMobileSlideIndicators() {
+                const currentText = desktopCurrentSlide.textContent;
+                const totalText = desktopTotalSlides.textContent;
+                
+                if (currentText.includes('Slide')) {
+                    const currentNumber = currentText.replace('Slide ', '');
+                    mobileCurrentSlide.textContent = currentNumber;
+                }
+                
+                if (totalText.includes('of')) {
+                    const totalNumber = totalText.replace('of ', '');
+                    mobileTotalSlides.textContent = '/ ' + totalNumber;
+                }
+            }
+            
+            // MutationObserver to watch for changes in the desktop indicators
+            const slideObserver = new MutationObserver(updateMobileSlideIndicators);
+            slideObserver.observe(desktopCurrentSlide, { childList: true, characterData: true, subtree: true });
+            slideObserver.observe(desktopTotalSlides, { childList: true, characterData: true, subtree: true });
+            
+            // Mobile navigation buttons
+            const mobilePrevBtn = document.getElementById('mobile-prev-slide');
+            const mobileNextBtn = document.getElementById('mobile-next-slide');
+            const desktopPrevBtn = document.getElementById('prev-slide');
+            const desktopNextBtn = document.getElementById('next-slide');
+            
+            mobilePrevBtn.addEventListener('click', function() {
+                desktopPrevBtn.click();
+            });
+            
+            mobileNextBtn.addEventListener('click', function() {
+                desktopNextBtn.click();
+            });
+            
+            // Mobile goto slide
+            const mobileGotoContainer = document.getElementById('mobile-goto');
+            const mobileGotoInput = document.getElementById('mobile-goto-input');
+            const mobileGotoBtn = document.getElementById('mobile-goto-btn');
+            const desktopGotoInput = document.getElementById('goto-slide');
+            const desktopGotoBtn = document.getElementById('goto-btn');
+            
+            // Expand input on click
+            mobileGotoBtn.addEventListener('click', function() {
+                if (!mobileGotoContainer.classList.contains('expanded')) {
+                    mobileGotoContainer.classList.add('expanded');
+                    mobileGotoInput.focus();
+                } else {
+                    // If already expanded and has a value, go to that slide
+                    if (mobileGotoInput.value.trim() !== '') {
+                        desktopGotoInput.value = mobileGotoInput.value;
+                        desktopGotoBtn.click();
+                    }
+                    mobileGotoContainer.classList.remove('expanded');
+                }
+            });
+            
+            // Handle Enter key on mobile goto input
+            mobileGotoInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && mobileGotoInput.value.trim() !== '') {
+                    desktopGotoInput.value = mobileGotoInput.value;
+                    desktopGotoBtn.click();
+                    mobileGotoContainer.classList.remove('expanded');
+                }
+            });
+            
+            // Click outside to collapse goto input
+            document.addEventListener('click', function(e) {
+                if (!mobileGotoContainer.contains(e.target) && mobileGotoContainer.classList.contains('expanded')) {
+                    mobileGotoContainer.classList.remove('expanded');
+                }
+            });
+            
+            // Link mobile back button to desktop back button
+            const mobileBackBtn = document.getElementById('mobile-back-btn');
+            const desktopBackBtn = document.getElementById('back-to-upload-btn');
+            
+            mobileBackBtn.addEventListener('click', function() {
+                desktopBackBtn.click();
+            });
+            
+            // Initial update of mobile slide indicators
+            updateMobileSlideIndicators();
+        });
+    </script>
+</body>
+</html> 
