@@ -62,8 +62,39 @@ def check_rate_limits(est_tokens=200):
     Returns:
         tuple: (can_proceed, wait_time, reason)
     """
-    # Bypass rate limits completely - always return can proceed
-    return True, 0, "ok"
+    global api_calls_minute, api_calls_day, tokens_minute, daily_reset_time
+    
+    with api_lock:
+        # Check if we need to reset daily counters
+        current_date = datetime.datetime.now().date()
+        if daily_reset_time is None or current_date > daily_reset_time:
+            reset_daily_counters()
+        
+        # Get current time for checking windows
+        now = time.time()
+        
+        # Clean up expired timestamps from the minute window
+        one_minute_ago = now - 60
+        while api_calls_minute and api_calls_minute[0] < one_minute_ago:
+            api_calls_minute.popleft()
+            
+        # Check if we've hit the RPM limit
+        if len(api_calls_minute) >= RATE_LIMIT_RPM - 1:  # Leave 1 request buffer
+            # Calculate wait time - time until oldest request expires plus a small buffer
+            oldest_request_time = api_calls_minute[0]
+            wait_time = max(0, oldest_request_time + 60 - now) + 0.5
+            return False, wait_time, f"RPM limit reached ({RATE_LIMIT_RPM})"
+        
+        # Check if we've hit the RPD limit
+        if len(api_calls_day) >= RATE_LIMIT_RPD - 10:  # Leave 10 request buffer
+            return False, 3600, f"RPD limit reached ({RATE_LIMIT_RPD})"
+            
+        # Record this call preemptively
+        api_calls_minute.append(now)
+        api_calls_day.append(now)
+        
+        # We're good to proceed
+        return True, 0, "ok"
 
 def wait_for_rate_limit(est_tokens=200, max_retries=5):
     """
@@ -76,8 +107,25 @@ def wait_for_rate_limit(est_tokens=200, max_retries=5):
     Returns:
         bool: Whether the call can proceed
     """
-    # Bypass rate limits completely - always return True
-    return True
+    retries = 0
+    
+    while retries < max_retries:
+        can_proceed, wait_time, reason = check_rate_limits(est_tokens)
+        
+        if can_proceed:
+            return True
+            
+        # Need to wait
+        if wait_time > 0:
+            print(f"Rate limit reached: {reason}. Waiting {wait_time:.1f}s before retry...")
+            time.sleep(wait_time)
+            retries += 1
+        else:
+            return True  # No wait needed
+    
+    # If we got here, we've retried too many times
+    print(f"Rate limit retry attempts exceeded: {reason}")
+    return False
 
 def record_token_usage(prompt_tokens, completion_tokens):
     """
@@ -87,8 +135,11 @@ def record_token_usage(prompt_tokens, completion_tokens):
         prompt_tokens (int): Number of tokens in the prompt
         completion_tokens (int): Number of tokens in the completion
     """
-    # Rate limiting disabled - this is now a no-op
-    pass
+    global tokens_minute
+    
+    with api_lock:
+        # Record token usage for this minute
+        tokens_minute.append(prompt_tokens + completion_tokens)
 
 # Configure Groq API for models
 groq_api_key = os.environ.get("GROQ_API_KEY")
@@ -103,8 +154,8 @@ if groq_api_key:
     client = Groq(api_key=groq_api_key)
     print("✅ Groq client initialized successfully")
 
-# Model configuration - use QWQ 32B model
-groq_qwen_model = "qwen-qwq-32b"  # The Groq model name
+# Model configuration - use Llama 3.3 70B model
+groq_model = "llama-3.3-70b-versatile"  # The Groq model name
 
 # Variable to track if Groq API is available
 groq_available = True
@@ -375,6 +426,14 @@ def check_groq_availability():
     # Start by assuming API is available (optimistic approach)
     groq_available = True
     
+    # Skip the API check if we're already at the rate limit
+    can_proceed, wait_time, reason = check_rate_limits(10)  # Minimal token estimate
+    if not can_proceed:
+        print(f"⚠️ Skipping Groq API check due to rate limits: {reason}")
+        print(f"Will wait {wait_time:.1f}s before making API calls")
+        # Don't mark as unavailable, it's just rate limited
+        return False
+    
     try:
         # Simple health check with minimal API usage
         try:
@@ -384,7 +443,7 @@ def check_groq_availability():
             # Make a very small request to check availability
             # This counts against our rate limits, so use minimal tokens
             completion = test_client.chat.completions.create(
-                model="mistral-saba-24b",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "user", "content": "Hi"}
                 ],
@@ -417,10 +476,14 @@ def check_groq_availability():
                 print("❌ Authentication error - API key is likely invalid or expired")
                 groq_available = False
                 return False
-            elif "rate limit" in error_str:
-                print("❌ Rate limit error - Groq API rate limit has been reached")
-                groq_available = False
-                return False
+            elif "rate limit" in error_str or "429" in error_str:
+                print("⚠️ Rate limit reached. The API is available but currently throttled.")
+                # Record this call for rate limiting
+                api_calls_minute.append(time.time())
+                api_calls_day.append(time.time())
+                # Don't mark as unavailable since it will work once rate limits reset
+                groq_available = True
+                return True
             elif "not found" in error_str or "model" in error_str:
                 print("❌ Model error - The requested model may not be available")
                 groq_available = False
@@ -487,7 +550,7 @@ def extract_text_from_pdf(pdf_path, session_id):
             # Add to the combined text
             text_content += f"Slide {slide_num}:\n{page_text}\n\n"
             
-            # Store in structured dictionary for RAG processing
+            # Store in structured dictionary for RAG processing - use string keys consistently
             structured_slides[str_slide_num] = page_text  # Use string keys for slide numbers
             
             # Render page to image for display
@@ -587,18 +650,14 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
         print("Creating Groq client")
         client = Groq(api_key=api_key)
         
-        # Test API connectivity with minimal request
-        try:
-            print("Testing API connectivity")
-            response = client.chat.completions.create(
-                messages=[{"role": "user", "content": "Hello, please respond with OK"}],
-                model="mistral-saba-24b",
-                max_tokens=5,
-            )
-            print(f"API connection test successful: {response.choices[0].message.content}")
-        except Exception as conn_error:
-            print(f"API connection test failed: {str(conn_error)}")
-            print("Falling back to local generation")
+        # Estimate tokens for the request
+        est_prompt_tokens = len(slide_text) // 4 + 150  # System prompt + slide content
+        est_completion_tokens = 250  # Summary length
+        est_total_tokens = est_prompt_tokens + est_completion_tokens
+        
+        # Check rate limits before proceeding
+        if not wait_for_rate_limit(est_tokens=est_total_tokens, max_retries=1):
+            print("Rate limit would be exceeded. Using local generation instead.")
             return generate_basic_summary(slide_text, slide_num)
         
         # Prepare the input message
@@ -625,7 +684,7 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
             try:
                 # Create streaming call
                 stream = client.chat.completions.create(
-                    model="mistral-saba-24b",
+                    model="llama-3.3-70b-versatile",
                     messages=messages,
                     temperature=0.3,
                     max_tokens=500,
@@ -634,34 +693,78 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
                 
                 # Process streaming response
                 def process_stream():
-                    for chunk in stream:
-                        if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                            content = chunk.choices[0].delta.content
-                            if content:
-                                yield content
+                    try:
+                        for chunk in stream:
+                            if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
+                                content = chunk.choices[0].delta.content
+                                if content:
+                                    yield content
+                    except Exception as stream_error:
+                        error_str = str(stream_error).lower()
+                        if "rate limit" in error_str or "429" in error_str:
+                            print(f"Rate limit error during streaming: {stream_error}")
+                            # Record for rate limiting
+                            api_calls_minute.append(time.time())
+                            api_calls_day.append(time.time())
+                            # Yield error message that will be handled by frontend
+                            yield "<<<RATE_LIMIT_ERROR>>>"
+                        else:
+                            print(f"Error during streaming: {stream_error}")
+                            yield f"Error: {str(stream_error)}"
                 
                 print("Returning stream generator")
                 return process_stream()
                 
             except Exception as stream_error:
-                print(f"Error during streaming: {str(stream_error)}")
+                error_str = str(stream_error).lower()
+                if "rate limit" in error_str or "429" in error_str:
+                    print(f"Rate limit error before streaming: {stream_error}")
+                    # Record for rate limiting
+                    api_calls_minute.append(time.time())
+                    api_calls_day.append(time.time())
+                    # Fall back to local generation
+                    return generate_basic_summary(slide_text, slide_num)
+                
+                print(f"Error during streaming setup: {str(stream_error)}")
                 # Fall back to non-streaming on error
                 print("Falling back to non-streaming mode")
                 streaming = False
         
         # Non-streaming mode (either by choice or as fallback)
         if not streaming:
-            print(f"Making Groq API non-streaming call for slide {slide_num}")
-            response = client.chat.completions.create(
-                model="mistral-saba-24b",
-                messages=messages,
-                temperature=0.3,
-                max_tokens=500,
-            )
-            
-            summary = response.choices[0].message.content
-            print(f"Received non-streaming summary: {summary[:50]}...")
-            return summary
+            try:
+                print(f"Making Groq API non-streaming call for slide {slide_num}")
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=500,
+                )
+                
+                # Record token usage
+                if hasattr(response, 'usage'):
+                    record_token_usage(
+                        response.usage.prompt_tokens, 
+                        response.usage.completion_tokens
+                    )
+                else:
+                    # Use estimate if not provided
+                    record_token_usage(est_prompt_tokens, est_completion_tokens)
+                
+                summary = response.choices[0].message.content
+                print(f"Received non-streaming summary: {summary[:50]}...")
+                return summary
+            except Exception as api_error:
+                error_str = str(api_error).lower()
+                if "rate limit" in error_str or "429" in error_str:
+                    print(f"Rate limit error in non-streaming mode: {api_error}")
+                    # Record for rate limiting
+                    api_calls_minute.append(time.time())
+                    api_calls_day.append(time.time())
+                    # Fall back to local generation
+                    return generate_basic_summary(slide_text, slide_num)
+                print(f"API error in non-streaming mode: {str(api_error)}")
+                return generate_basic_summary(slide_text, slide_num)
             
     except Exception as e:
         print(f"Uncaught error in generate_groq_summary: {str(e)}")
@@ -870,26 +973,26 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
     
     print(f"Estimated token usage for chat: {est_total_tokens} tokens")
     
+    # Check rate limits before attempting to call the API
+    if not wait_for_rate_limit(est_tokens=est_total_tokens, max_retries=2):
+        fallback_msg = "I'm sorry, but we've reached the rate limit for our AI service. "
+        fallback_msg += "Please try again in a moment. "
+        if relevant_slides:
+            fallback_msg += f"Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}."
+        return fallback_msg
+    
     # Implement retry mechanism for robustness
     max_retries = 3
     for attempt in range(max_retries):
         try:
             print(f"Attempt {attempt+1}: Generating RAG-enhanced chat response with QWQ 32B model")
             
-            # Check rate limits before making the API call
-            if not wait_for_rate_limit(est_tokens=est_total_tokens, max_retries=2):
-                print("Rate limit would be exceeded. Using local fallback.")
-                fallback_msg = "I'm sorry, but I need to limit my responses right now due to high usage. "
-                fallback_msg += "Please try again in a few minutes or rephrase your question to be more specific."
-                return fallback_msg
+            # Initialize Groq client
+            client = Groq(api_key=groq_api_key)
             
-            # Make the API request using the Groq client with better error handling
             try:
-                # Initialize Groq client
-                client = Groq(api_key=groq_api_key)
-                
                 completion = client.chat.completions.create(
-                    model="mistral-saba-24b",
+                    model="llama-3.3-70b-versatile",
                     messages=messages,
                     temperature=0.1,  # Very low temperature for more focused responses
                     max_tokens=500  # Reduced from 700 to save tokens
@@ -955,9 +1058,31 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
                     return f"{content}\n\n(Information from slides: {', '.join([str(num) for num in relevant_slides])})"
                 return content
                 
-            except (AttributeError, IndexError, TypeError) as struct_error:
+            except Exception as api_error:
+                error_str = str(api_error).lower()
+                if "rate limit" in error_str or "429" in error_str:
+                    print(f"Rate limit error: {api_error}")
+                    wait_time = 5 if attempt < max_retries - 1 else 0
+                    # Record this event for rate limiting
+                    api_calls_minute.append(time.time())
+                    api_calls_day.append(time.time())
+                    
+                    if attempt < max_retries - 1:
+                        # Wait longer on each retry
+                        sleep_time = (attempt + 1) * 2
+                        print(f"Rate limit hit. Waiting {sleep_time}s before retry...")
+                        time.sleep(sleep_time)
+                        continue
+                    else:
+                        # All retries failed due to rate limiting
+                        fallback_msg = "I'm sorry, but our AI service is currently experiencing high demand. "
+                        fallback_msg += "Please try again in a moment. "
+                        if relevant_slides:
+                            fallback_msg += f"Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}."
+                        return fallback_msg
+                
                 # Handle structural errors in the response
-                error_msg = f"API response structure error: {str(struct_error)}"
+                error_msg = f"API response structure error: {str(api_error)}"
                 print(error_msg)
                 raise ValueError(error_msg)
             
@@ -970,7 +1095,10 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
             else:
                 # All retries failed
                 print("All retry attempts failed. Returning error message.")
-                return f"I'm sorry, I encountered an error processing your request. Please try again later with a different question."
+                fallback_msg = f"I'm sorry, I encountered an error processing your request. Please try again later with a different question."
+                if relevant_slides:
+                    fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
+                return fallback_msg
     
     # Should never reach here, but just in case
     return "I apologize, but I couldn't process your request. Please try again later."
@@ -1105,31 +1233,41 @@ def get_summaries():
         slide_nums_param = request.args.get('slide_nums')
         force_regenerate = request.args.get('force_regenerate', 'false').lower() == 'true'
         
+        print(f"get_summaries request: session_id={session_id}, slide_nums={slide_nums_param}, force_regenerate={force_regenerate}")
+        
         # Validate parameters
         if not session_id or not slide_nums_param:
+            print(f"Missing required parameters: session_id={session_id}, slide_nums={slide_nums_param}")
             return jsonify({"error": "Missing required parameters"}), 400
             
         # Parse slide numbers
         try:
             slide_nums = [int(num.strip()) for num in slide_nums_param.split(',')]
-        except ValueError:
+        except ValueError as e:
+            print(f"Invalid slide_nums format: {slide_nums_param}. Error: {str(e)}")
             return jsonify({"error": "Invalid slide_nums format. Use comma-separated integers."}), 400
             
         # Get slide data
         slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
         if not slide_data:
+            print(f"No data found for session {session_id}")
             return jsonify({"error": f"No data found for session {session_id}"}), 404
             
         # Check if extraction data exists
         extraction_data = slide_data.get('extraction_data', {})
         if not extraction_data:
+            print(f"No extraction data found for session {session_id}")
             return jsonify({"error": f"No extraction data found for session {session_id}"}), 404
             
         # Get slide texts
         slide_texts = extraction_data.get('slide_texts', {})
         if not slide_texts:
+            print(f"No slide texts found for session {session_id}")
             return jsonify({"error": "No slide texts found"}), 404
             
+        # Debug output slide_texts keys
+        print(f"Slide text keys in session {session_id}: {list(slide_texts.keys())}")
+        
         # Initialize slide_summaries if not present
         if 'slide_summaries' not in slide_data:
             slide_data['slide_summaries'] = {}
@@ -1142,11 +1280,13 @@ def get_summaries():
             str_slide_num = str(slide_num)
             # Check if the slide exists
             if str_slide_num not in slide_texts:
+                print(f"Slide {slide_num} (key={str_slide_num}) not found in slide_texts. Available keys: {list(slide_texts.keys())}")
                 continue
                 
             # Skip empty slides
             slide_text = slide_texts.get(str_slide_num, "")
             if not slide_text.strip():
+                print(f"Slide {slide_num} is empty, skipping")
                 continue
                 
             # Check if we need to process this slide
@@ -1162,6 +1302,7 @@ def get_summaries():
                 str_slide_num = str(slide_num)
                 if str_slide_num in slide_data['slide_summaries']:
                     result[slide_num] = slide_data['slide_summaries'][str_slide_num]
+            print(f"Returning cached summaries for {len(result)} slides")
             return jsonify(result)
             
         # Process slides that need summarization
@@ -1243,24 +1384,49 @@ def serve_static(path):
 def serve_slide_image(path):
     """Serve slide images with proper error handling"""
     try:
+        print(f"Requested slide image: {path}")
+        
         # Check if path exists directly
         if os.path.exists(path):
+            print(f"Serving image from direct path: {path}")
             return send_file(path)
         
         # Try looking in the temporary directory
         temp_path = os.path.join(tempfile.gettempdir(), path)
         if os.path.exists(temp_path):
+            print(f"Serving image from temp path: {temp_path}")
             return send_file(temp_path)
+            
+        # Try with various prefixes from temp directory
+        temp_dir = tempfile.gettempdir()
+        print(f"Searching for image in temp directory: {temp_dir}")
+        temp_matches = []
+        try:
+            for file in os.listdir(temp_dir):
+                if path in file and file.endswith('.png'):
+                    full_path = os.path.join(temp_dir, file)
+                    temp_matches.append(full_path)
+                    
+            if temp_matches:
+                print(f"Found matching image in temp dir: {temp_matches[0]}")
+                return send_file(temp_matches[0])
+        except Exception as dir_error:
+            print(f"Error searching temp directory: {str(dir_error)}")
             
         # Try with various session prefixes (in case the session ID got separated)
         sessions = list(session_images.keys())
+        print(f"Searching across {len(sessions)} sessions for image containing: {path}")
         
         # Try each session prefix
         for session_id in sessions:
             # Check if this image belongs to this session
             for img_path in session_images.get(session_id, []):
                 if path in img_path:
-                    return send_file(img_path)
+                    if os.path.exists(img_path):
+                        print(f"Found image in session {session_id}: {img_path}")
+                        return send_file(img_path)
+                    else:
+                        print(f"Found path in session but file doesn't exist: {img_path}")
         
         # If we got here, we couldn't find the image
         print(f"Could not find slide image: {path}")
@@ -1268,15 +1434,32 @@ def serve_slide_image(path):
         for session_id in session_images:
             print(f"Images in session {session_id}: {len(session_images[session_id])}")
         
+        # Check if we can still recover by doing a full search in temp
+        try:
+            print("Performing full scan of temp directory for any slide images")
+            all_slides = []
+            for file in os.listdir(temp_dir):
+                if file.endswith('.png') and ('slide' in file.lower() or 'session' in file.lower()):
+                    all_slides.append(os.path.join(temp_dir, file))
+                    
+            if all_slides:
+                print(f"Found {len(all_slides)} slide images in temp dir, using first one as fallback")
+                # Use the first slide as a fallback rather than showing nothing
+                return send_file(all_slides[0])
+        except Exception as e:
+            print(f"Error searching for fallback slides: {str(e)}")
+        
         # Return a placeholder image
         placeholder_path = os.path.join(app.root_path, 'static', 'images', 'placeholder.png')
         if os.path.exists(placeholder_path):
+            print(f"Using placeholder image: {placeholder_path}")
             return send_file(placeholder_path)
         else:
             # Create a simple placeholder image
+            print("Creating dynamic placeholder image")
             img = Image.new('RGB', (800, 600), color=(240, 240, 240))
             draw = ImageDraw.Draw(img)
-            draw.text((400, 300), "Image not found", fill=(0, 0, 0))
+            draw.text((400, 300), "Image not available", fill=(0, 0, 0))
             
             img_io = BytesIO()
             img.save(img_io, 'PNG')
@@ -1303,20 +1486,59 @@ def get_slide_images():
     data = request.json
     session_id = data.get('session_id')
     
-    if not session_id or session_id not in session_images:
-        return jsonify({'error': 'No slides have been uploaded or session expired'}), 400
+    if not session_id:
+        print(f"Missing session_id in get_slide_images request")
+        return jsonify({'error': 'No session ID provided'}), 400
+    
+    if session_id not in session_images:
+        print(f"Session {session_id} not found in session_images. Available sessions: {list(session_images.keys())}")
+        # Try to get slides from SLIDE_DATA as fallback
+        if session_id in app.config.get('SLIDE_DATA', {}):
+            print(f"Session found in SLIDE_DATA but not in session_images, attempting to rebuild image list")
+            # Look for image files that might have this session ID in their name
+            all_images = []
+            temp_dir = tempfile.gettempdir()
+            try:
+                for file in os.listdir(temp_dir):
+                    if session_id in file and file.endswith('.png'):
+                        full_path = os.path.join(temp_dir, file)
+                        all_images.append(full_path)
+                        
+                if all_images:
+                    # We found some images, let's use them
+                    print(f"Found {len(all_images)} images for session {session_id} in temp directory")
+                    session_images[session_id] = all_images
+                else:
+                    return jsonify({'error': 'No slide images found for this session'}), 404
+            except Exception as e:
+                print(f"Error trying to rebuild image list: {str(e)}")
+                return jsonify({'error': 'No slide images found for this session'}), 404
+        else:
+            return jsonify({'error': 'No slides have been uploaded or session expired'}), 400
     
     try:
         # Get the slide images for this session
         images = session_images.get(session_id, [])
+        print(f"Found {len(images)} images for session {session_id}")
         
         # Create the image paths to be used by the client
         image_paths = []
         for img_path in images:
+            # Ensure the file actually exists before sending it to the client
+            if not os.path.exists(img_path):
+                print(f"Warning: Image file not found: {img_path}")
+                continue
+                
             # Use just the filename as the path parameter
             filename = os.path.basename(img_path)
             image_paths.append(f"/slide_image/{filename}")
         
+        # If we didn't find any valid images, return an error
+        if not image_paths:
+            print(f"No valid image paths found for session {session_id}")
+            return jsonify({'error': 'No valid slide images found'}), 404
+            
+        print(f"Returning {len(image_paths)} image paths for session {session_id}")
         return jsonify({
             'success': True,
             'slide_image_paths': image_paths,
@@ -1406,13 +1628,13 @@ def stream_summary():
 print("\n" + "="*50)
 print("STUDYMATE INITIALIZATION")
 print("="*50)
-print("Checking Groq QWQ 32B model availability...")
+print("Checking Groq Llama 3.3 70B model availability...")
 api_available = check_groq_availability()
 if api_available:
-    print("\n✅ Groq QWQ 32B model is AVAILABLE and READY")
-    print("StudyMate will use the QWQ 32B model for all AI operations.")
+    print("\n✅ Groq Llama 3.3 70B model is AVAILABLE and READY")
+    print("StudyMate will use the Llama 3.3 70B model for all AI operations.")
 else:
-    print("\n⚠️ Groq QWQ 32B model is UNAVAILABLE")
+    print("\n⚠️ Groq Llama 3.3 70B model is UNAVAILABLE")
     print("StudyMate will use basic fallback processing for summaries and chat.")
     print("Consider checking your API key or network connection.")
 print("="*50 + "\n")
@@ -1690,7 +1912,7 @@ Format:
         # API call with minimal tokens
         client = Groq(api_key=groq_api_key)
         response = client.chat.completions.create(
-            model="mistral-saba-24b",
+            model="llama-3.3-70b-versatile",
             messages=messages,
             temperature=0.1,
             max_tokens=250  # Minimal tokens for an overview
