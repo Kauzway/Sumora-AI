@@ -4,530 +4,1247 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sumora</title>
-    <link rel="stylesheet" href="/static/css/style.css">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Add Bootstrap for better styling -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Add Bootstrap for grid layout -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Add Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         :root {
-            /* New color palette based on #e1c1a5 */
-            --primary-color: #e1c1a5; /* Logo color */
-            --primary-dark: #c8a68a; /* Darker shade of primary */
-            --primary-light: #f0d4be; /* Lighter shade of primary */
-            --accent-color: #8a664c; /* Complementary brown */
-            --text-color: #4a3c32; /* Dark brown for text */
-            --dark-bg: #2d2520; /* Dark brown background */
-            --dark-card: #3a322b; /* Slightly lighter dark */
-            --dark-text: #e5d6c9; /* Light beige for dark mode text */
-            --light-bg: #f8f4f0; /* Very light beige background */
-            --light-text: #8a7a6d; /* Medium brown for light text */
-            --success-color: #7fbc8c; /* Muted green */
-            --warning-color: #e0b973; /* Muted gold */
-            --danger-color: #d67f76; /* Muted red */
-            --glass-bg: rgba(255, 255, 255, 0.7); /* Glass background for light mode */
-            --glass-bg-dark: rgba(45, 37, 32, 0.75); /* Glass background for dark mode */
-            --glass-border: rgba(255, 255, 255, 0.2); /* Glass border for light mode */
-            --glass-border-dark: rgba(255, 255, 255, 0.1); /* Glass border for dark mode */
-            --accent-text-light: #4a3c32; /* For bold text in light mode */
-            --accent-text-dark: #f0d4be; /* For bold text in dark mode */
+            /* Brand colors */
+            --brand-primary: #e1c1a5;
+            --brand-primary-light: #f0d4be;
+            --brand-primary-lighter: #f7e9de;
+            --brand-primary-dark: #c8a68a;
+            --brand-primary-darker: #a3866d;
+            
+            /* UI colors - Light Mode */
+            --light-bg: #f8f9fc;
+            --light-surface: #ffffff;
+            --light-surface-variant: #f0f2f5;
+            --light-on-surface: #1a1c1e;
+            --light-on-surface-variant: #41484d;
+            --light-outline: #72787e;
+            
+            /* UI colors - Dark Mode */
+            --dark-bg: #121212;
+            --dark-surface: #1e1e1e;
+            --dark-surface-variant: #2c2c2c;
+            --dark-on-surface: #e4e4e4;
+            --dark-on-surface-variant: #c4c7c5;
+            --dark-outline: #8b9198;
+            
+            /* Accent colors */
+            --accent-success: #4caf50;
+            --accent-info: #2196f3;
+            --accent-warning: #ff9800;
+            --accent-error: #f44336;
+            
+            /* Shadows */
+            --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.04);
+            --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.12);
+            
+            /* Transitions */
+            --transition-fast: 150ms;
+            --transition-medium: 300ms;
+            --transition-slow: 500ms;
+            
+            /* Border radius */
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 16px;
+            --radius-xl: 24px;
+            --radius-pill: 9999px;
+            
+            /* Spacing scale */
+            --space-1: 4px;
+            --space-2: 8px;
+            --space-3: 12px;
+            --space-4: 16px;
+            --space-5: 24px;
+            --space-6: 32px;
+            --space-7: 48px;
+            --space-8: 64px;
+            
+            /* Updated Glass effect */
+            --glass-light: rgba(255, 255, 255, 0.7);
+            --glass-light-strong: rgba(255, 255, 255, 0.85);
+            --glass-dark: rgba(30, 30, 30, 0.7);
+            --glass-dark-strong: rgba(20, 20, 20, 0.85);
+            --glass-blur: 16px;
+            
+            /* Animation */
+            --animation-scale-down: scale(0.98);
+            --animation-scale-up: scale(1.02);
+            
+            /* Z-index layers */
+            --z-dropdown: 1000;
+            --z-sticky: 1020;
+            --z-fixed: 1030;
+            --z-modal-backdrop: 1040;
+            --z-modal: 1050;
+            --z-tooltip: 1080;
+        }
+        
+        /* Global Styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
         
         body {
-            font-family: 'Poppins', sans-serif;
-            background-color: var(--light-bg);
-            color: var(--text-color);
-            transition: background-color 0.3s ease, color 0.3s ease;
-            /* Improved background pattern */
-            background-image: url('https://www.transparenttextures.com/patterns/subtle-white-feathers.png');
-            min-height: 100vh;
+            font-family: 'Inter', sans-serif;
+            font-size: 16px;
+            line-height: 1.5;
+            color: var(--light-on-surface);
             position: relative;
-            padding-bottom: 60px; /* Space for footer */
+            min-height: 100vh;
+            transition: background-color var(--transition-medium), color var(--transition-medium);
+            
+            /* Modern Light Mode Background */
+            background-color: var(--light-bg);
+            background-image: 
+                radial-gradient(circle at 100% 0%, rgba(225, 193, 165, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 0% 100%, rgba(240, 212, 190, 0.12) 0%, transparent 50%),
+                linear-gradient(120deg, rgba(250, 250, 255, 1) 0%, rgba(240, 240, 245, 1) 100%);
+            background-attachment: fixed;
+            background-size: cover;
         }
         
         body.dark-mode {
+            color: var(--dark-on-surface);
+            
+            /* Modern Dark Mode Background */
             background-color: var(--dark-bg);
-            color: var(--dark-text);
-            /* Improved dark background pattern */
-            background-image: url('https://www.transparenttextures.com/patterns/black-felt.png');
-        }
-        
-        /* Fix for dark mode text visibility */
-        body.dark-mode .text-muted,
-        body.dark-mode .card .text-muted {
-            color: rgba(229, 214, 201, 0.75) !important; /* Using dark-text with some opacity */
-        }
-        
-        /* Fix for file name visibility */
-        #file-name {
-            color: var(--accent-color);
-            font-weight: 500;
-            padding: 5px 10px;
-            border-radius: 4px;
-            background-color: rgba(225, 193, 165, 0.2);
-            display: inline-block;
-            margin-top: 10px;
-        }
-        
-        body.dark-mode #file-name {
-            color: var(--primary-light);
-            background-color: rgba(200, 166, 138, 0.2);
-        }
-        
-        /* Enhance logo visibility in light mode */
-        .logo-container {
-            background-color: rgba(45, 37, 32, 0.05) !important; /* Slight dark background */
-            padding: 4px 8px !important;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1) !important;
-            transition: all 0.3s ease;
-        }
-        
-        .logo-container:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
-        }
-        
-        body.dark-mode .logo-container {
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2) !important;
-            background-color: rgba(229, 214, 201, 0.05) !important; /* Slight light background in dark mode */
-        }
-        
-        /* Style for the upload description */
-        .upload-description {
-            color: var(--text-color);
-            font-weight: 400;
-        }
-        
-        body.dark-mode .upload-description {
-            color: var(--dark-text);
-        }
-        
-        /* Fix spacing and position for the summary panel and chat container */
-        .summary-panel {
-            position: relative;
-        }
-        
-        .chat-container {
-            position: relative;
-        }
-        
-        /* Scrollable summary panel with fixed height */
-        .summary-panel {
-            background-color: var(--glass-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            transition: background-color 0.3s ease;
-            border: 1px solid var(--glass-border);
-            height: 350px; /* Default height */
-            max-height: 350px; /* Max height to prevent stretching */
-            overflow-y: auto; /* Add scroll when needed */
-            margin-bottom: 1rem;
-            position: relative; /* For resize handle */
-            resize: vertical; /* Allow vertical resizing */
-            min-height: 200px; /* Minimum height */
-        }
-        
-        /* Make the chat container resizable */
-        .chat-container {
-            background-color: var(--glass-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border-radius: 12px;
-            padding: 12px;
-            height: 150px;
-            overflow-y: auto;
-            margin-bottom: 10px;
-            transition: background-color 0.3s ease;
-            border: 1px solid var(--glass-border);
-            max-height: 250px; /* Increased max height */
-            resize: vertical; /* Allow vertical resizing */
-            min-height: 100px; /* Minimum height */
-        }
-        
-        /* Custom resize handle for better visibility */
-        .summary-panel::after,
-        .chat-container::after {
-            content: '';
-            position: absolute;
-            bottom: 3px;
-            right: 3px;
-            width: 10px;
-            height: 10px;
-            background-image: radial-gradient(circle, var(--primary-color) 1px, transparent 2px);
-            background-size: 4px 4px;
-            background-repeat: round;
-            cursor: ns-resize;
-            opacity: 0.5;
-            transition: opacity 0.2s ease;
-        }
-        
-        .summary-panel:hover::after,
-        .chat-container:hover::after {
-            opacity: 1;
-        }
-        
-        body.dark-mode .card {
-            background-color: var(--dark-card);
-            border-color: #333;
-        }
-        
-        body.dark-mode .card-body,
-        body.dark-mode .summary-panel,
-        body.dark-mode .bot-message .message-bubble {
-            background-color: var(--dark-card);
-            color: var(--dark-text);
-        }
-        
-        body.dark-mode .chat-container {
-            background-color: rgba(30, 30, 30, 0.8);
-            color: var(--dark-text);
-        }
-        
-        body.dark-mode #slide-summary,
-        body.dark-mode #slide-title {
-            color: var(--dark-text);
+            background-image: 
+                radial-gradient(circle at 100% 0%, rgba(80, 60, 50, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 0% 100%, rgba(60, 50, 80, 0.12) 0%, transparent 50%),
+                linear-gradient(120deg, rgba(20, 20, 28, 1) 0%, rgba(15, 15, 20, 1) 100%);
+            background-attachment: fixed;
+            background-size: cover;
         }
         
         h1, h2, h3, h4, h5, h6 {
-            font-family: 'Montserrat', sans-serif;
+            font-family: 'Plus Jakarta Sans', sans-serif;
             font-weight: 600;
+            letter-spacing: -0.03em;
+            color: var(--light-on-surface);
+        }
+        
+        body.dark-mode h1,
+        body.dark-mode h2,
+        body.dark-mode h3,
+        body.dark-mode h4,
+        body.dark-mode h5,
+        body.dark-mode h6 {
+            color: var(--dark-on-surface);
+        }
+        
+        a {
+            color: var(--brand-primary-dark);
+            text-decoration: none;
+            transition: color var(--transition-fast);
+        }
+        
+        a:hover {
+            color: var(--brand-primary-darker);
+            text-decoration: none;
+        }
+        
+        img {
+            max-width: 100%;
+        }
+        
+        /* Button Styles */
+        .btn {
+            font-weight: 500;
+            letter-spacing: 0.02em;
+            border-radius: var(--radius-md);
+            padding: var(--space-2) var(--space-4);
+            transition: all var(--transition-fast);
+            border: none;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::after {
+            content: "";
+            display: block;
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            background-color: transparent;
+            pointer-events: none;
+            transition: background-color var(--transition-fast);
+        }
+        
+        .btn:active {
+            transform: var(--animation-scale-down);
+        }
+        
+        .btn:hover::after {
+            background-color: rgba(0, 0, 0, 0.05);
         }
         
         .btn-primary {
-            background-color: var(--primary-color);
-            border-color: var(--primary-color);
+            background-color: var(--brand-primary);
+            color: var(--light-on-surface);
         }
         
         .btn-primary:hover {
-            background-color: var(--primary-dark);
-            border-color: var(--primary-dark);
+            color: var(--light-on-surface);
         }
         
+        .btn-outline {
+            background-color: transparent;
+            color: var(--brand-primary-dark);
+            border: 1px solid var(--brand-primary);
+        }
+        
+        .btn-outline:hover {
+            background-color: rgba(225, 193, 165, 0.1);
+        }
+        
+        .btn-secondary {
+            background-color: var(--light-surface-variant);
+            color: var(--light-on-surface);
+        }
+        
+        body.dark-mode .btn-secondary {
+            background-color: var(--dark-surface-variant);
+            color: var(--dark-on-surface);
+        }
+        
+        .btn-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-pill);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+        }
+        
+        .btn-sm {
+            padding: var(--space-1) var(--space-3);
+            font-size: 0.875rem;
+        }
+        
+        .btn-lg {
+            padding: var(--space-3) var(--space-5);
+            font-size: 1.125rem;
+        }
+        
+        .btn-float {
+            position: absolute;
+            bottom: var(--space-4);
+            right: var(--space-4);
+            width: 56px;
+            height: 56px;
+            border-radius: var(--radius-pill);
+            box-shadow: var(--shadow-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        
+        /* Card Styles */
         .card {
-            border-radius: 16px;
-            box-shadow: 0 10px 25px rgba(226, 193, 165, 0.15);
+            background: var(--glass-light-strong);
+            border-radius: var(--radius-xl);
+            border: none;
             overflow: hidden;
-            transition: all 0.3s ease;
-            background-color: var(--glass-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid var(--glass-border);
+            box-shadow: var(--shadow-md);
+            transition: all var(--transition-medium);
+            margin-bottom: var(--space-4);
         }
         
-        .card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 15px 30px rgba(226, 193, 165, 0.2);
+        body.dark-mode .card {
+            background: var(--glass-dark-strong);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
         }
         
         .card-header {
-            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-            color: white;
-            border-bottom: none;
+            background: transparent;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            padding: var(--space-4) var(--space-5);
+        }
+        
+        body.dark-mode .card-header {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .card-body {
+            padding: var(--space-5);
+        }
+        
+        /* Form Controls */
+        .form-control {
+            border-radius: var(--radius-md);
+            border: 1px solid var(--light-outline);
+            padding: var(--space-2) var(--space-3);
+            transition: all var(--transition-fast);
+            background-color: var(--light-surface);
+            color: var(--light-on-surface);
+        }
+        
+        .form-control:focus {
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 3px rgba(225, 193, 165, 0.25);
+        }
+        
+        body.dark-mode .form-control {
+            background-color: var(--dark-surface-variant);
+            border-color: var(--dark-outline);
+            color: var(--dark-on-surface);
+        }
+        
+        body.dark-mode .form-control:focus {
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 3px rgba(225, 193, 165, 0.25);
+        }
+        
+        .form-label {
+            font-weight: 500;
+            margin-bottom: var(--space-2);
+            color: var(--light-on-surface-variant);
+        }
+        
+        body.dark-mode .form-label {
+            color: var(--dark-on-surface-variant);
+        }
+        
+        /* Upload Section */
+        #upload-section {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-5) 0;
+            position: relative;
+        }
+        
+        .upload-container {
+            max-width: 600px;
+            width: 100%;
+            padding: 0 var(--space-4);
+            margin: 0 auto;
+        }
+        
+        .upload-card {
+            background: var(--glass-light-strong);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            padding: var(--space-6);
+            border-radius: var(--radius-xl);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        
+        body.dark-mode .upload-card {
+            background: var(--glass-dark-strong);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+        
+        .upload-logo {
+            margin-bottom: var(--space-5);
+            max-width: 180px;
+        }
+        
+        .upload-title {
+            font-size: 2rem;
+            margin-bottom: var(--space-3);
+            font-weight: 700;
+        }
+        
+        .upload-description {
+            color: var(--light-on-surface-variant);
+            margin-bottom: var(--space-5);
+            font-size: 1.1rem;
+        }
+        
+        body.dark-mode .upload-description {
+            color: var(--dark-on-surface-variant);
         }
         
         .upload-area {
-            background-color: white;
-            border: 2px dashed var(--light-text) !important;
-            border-radius: 16px !important;
-            transition: all 0.3s ease;
+            border: 2px dashed var(--brand-primary);
+            border-radius: var(--radius-lg);
+            padding: var(--space-6);
+            margin-bottom: var(--space-5);
+            position: relative;
+            transition: all var(--transition-medium);
+            background-color: rgba(225, 193, 165, 0.05);
+            cursor: pointer;
         }
         
         .upload-area:hover {
-            border-color: var(--primary-color) !important;
-            background-color: rgba(74, 107, 250, 0.05);
+            background-color: rgba(225, 193, 165, 0.1);
         }
         
+        .upload-area input[type="file"] {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+        
+        .upload-icon {
+            font-size: 3rem;
+            color: var(--brand-primary);
+            margin-bottom: var(--space-3);
+        }
+        
+        .upload-text {
+            color: var(--light-on-surface-variant);
+            font-size: 1rem;
+        }
+        
+        body.dark-mode .upload-text {
+            color: var(--dark-on-surface-variant);
+        }
+        
+        #file-name {
+            padding: var(--space-3);
+            background-color: rgba(225, 193, 165, 0.1);
+            border-radius: var(--radius-md);
+            margin: var(--space-3) 0 var(--space-5) 0;
+            display: none;
+            font-weight: 500;
+            color: var(--brand-primary-darker);
+        }
+        
+        body.dark-mode #file-name {
+            background-color: rgba(225, 193, 165, 0.15);
+            color: var(--brand-primary-light);
+        }
+        
+        /* Results Section */
         #results-section {
-            height: calc(100vh - 60px);
-            max-height: 100%;
-            min-height: 600px;
-            margin-bottom: 0;
-            padding-bottom: 60px; /* Space for footer */
-            overflow-y: auto;
+            min-height: 100vh;
+            padding: 0 0 var(--space-6) 0;
+            display: none;
+        }
+        
+        .app-header {
+            position: sticky;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: var(--glass-light);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+            z-index: var(--z-sticky);
+            padding: var(--space-3) var(--space-5);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: var(--space-5);
+        }
+        
+        body.dark-mode .app-header {
+            background: var(--glass-dark);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .header-logo {
+            height: 40px;
+        }
+        
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+        }
+        
+        .header-range {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        
+        .header-range input {
+            width: 60px;
+            text-align: center;
+        }
+        
+        /* Switch/Toggle */
+        .theme-switch {
+            position: relative;
+            width: 60px;
+            height: 30px;
+            border-radius: var(--radius-pill);
+            background: var(--light-surface-variant);
+            cursor: pointer;
+            transition: background var(--transition-fast);
+            user-select: none;
+        }
+        
+        .theme-switch.active {
+            background: var(--brand-primary-dark);
+        }
+        
+        .switch-handle {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 24px;
+            height: 24px;
+            border-radius: var(--radius-pill);
+            background: var(--light-surface);
+            transition: transform var(--transition-medium);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .theme-switch.active .switch-handle {
+            transform: translateX(30px);
+            background: var(--dark-surface);
+        }
+        
+        /* Slide Viewer */
+        .slide-container {
+            height: calc(100vh - 200px);
+            min-height: 400px;
+            position: relative;
         }
         
         .slide-viewer {
-            background-color: #e9ecef;
-            border-radius: 8px;
+            height: calc(100% - 80px);
+            background: var(--glass-light-strong);
+            border-radius: var(--radius-lg);
             overflow: hidden;
+            box-shadow: var(--shadow-md);
             position: relative;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            height: 500px; /* Fixed height */
             display: flex;
             align-items: center;
             justify-content: center;
         }
         
         body.dark-mode .slide-viewer {
-            background-color: #333;
+            background: var(--glass-dark-strong);
         }
         
-        .slide-img {
+        .slide-content {
             width: 100%;
-            object-fit: contain;
-            background-color: white;
-        }
-        
-        .slide-navigation-controls {
-            position: absolute;
-            bottom: 20px;
-            left: 0;
-            right: 0;
-            display: flex;
-            justify-content: center;
-            z-index: 100;
-        }
-        
-        .nav-btn {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background-color: rgba(255, 255, 255, 0.9);
+            height: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 0 5px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+        
+        .slide-image {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        
+        .slide-loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            background: rgba(255, 255, 255, 0.8);
+            z-index: 5;
+        }
+        
+        body.dark-mode .slide-loading {
+            background: rgba(0, 0, 0, 0.7);
+        }
+        
+        .slide-controls {
+            position: absolute;
+            bottom: var(--space-4);
+            left: 0;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-3);
+            z-index: 10;
+        }
+        
+        .slide-control-btn {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-pill);
+            background: var(--glass-light-strong);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--light-on-surface);
+            border: none;
+            font-size: 1.2rem;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all var(--transition-fast);
+            box-shadow: var(--shadow-md);
         }
         
-        .nav-btn:hover {
-            background-color: var(--primary-color);
-            color: white;
+        .slide-control-btn:hover {
+            background: var(--brand-primary-light);
         }
         
-        .thumbnail-container {
+        body.dark-mode .slide-control-btn {
+            background: var(--glass-dark-strong);
+            color: var(--dark-on-surface);
+        }
+        
+        body.dark-mode .slide-control-btn:hover {
+            background: var(--brand-primary-dark);
+        }
+        
+        /* Thumbnails */
+        .thumbnails-container {
+            margin-top: var(--space-4);
             overflow-x: auto;
             white-space: nowrap;
-            padding: 10px 0;
             scrollbar-width: thin;
+            scrollbar-color: var(--brand-primary) var(--light-surface-variant);
+            padding: var(--space-2);
+            background: var(--glass-light-strong);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+        }
+        
+        body.dark-mode .thumbnails-container {
+            background: var(--glass-dark-strong);
+            scrollbar-color: var(--brand-primary) var(--dark-surface-variant);
+        }
+        
+        .thumbnails-container::-webkit-scrollbar {
+            height: 6px;
+        }
+        
+        .thumbnails-container::-webkit-scrollbar-thumb {
+            background-color: var(--brand-primary);
+            border-radius: var(--radius-pill);
+        }
+        
+        .thumbnails-container::-webkit-scrollbar-track {
+            background-color: var(--light-surface-variant);
+            border-radius: var(--radius-pill);
+        }
+        
+        body.dark-mode .thumbnails-container::-webkit-scrollbar-track {
+            background-color: var(--dark-surface-variant);
         }
         
         .thumbnail {
             display: inline-block;
             width: 120px;
-            height: 67px;
-            margin-right: 10px;
-            border: 2px solid transparent;
-            border-radius: 4px;
+            height: 68px;
+            margin-right: var(--space-3);
+            border-radius: var(--radius-md);
             overflow: hidden;
+            border: 2px solid transparent;
             cursor: pointer;
+            transition: all var(--transition-fast);
+            position: relative;
+        }
+        
+        .thumbnail:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
         
         .thumbnail.active {
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 2px rgba(74, 107, 250, 0.5);
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 2px rgba(225, 193, 165, 0.3);
         }
         
-        .thumbnail img {
+        .thumbnail-img {
             width: 100%;
             height: 100%;
             object-fit: cover;
         }
         
-        .summary-panel {
-            background-color: var(--glass-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-            padding: 16px;
+        .thumbnail-number {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 0 var(--space-2);
+            font-size: 0.7rem;
+            border-top-left-radius: var(--radius-md);
+        }
+        
+        /* AI Panel */
+        .ai-panel {
+            position: relative;
+            height: calc(100vh - 200px);
+            min-height: 400px;
             display: flex;
             flex-direction: column;
-            transition: background-color 0.3s ease;
-            border: 1px solid var(--glass-border);
-            height: 400px; /* Fixed height */
-            max-height: 400px; /* Max height to prevent stretching */
-            overflow-y: auto; /* Add scroll when needed */
-            margin-bottom: 1rem;
         }
         
-        body.dark-mode .summary-panel {
-            background-color: var(--glass-bg-dark);
-            border-color: var(--glass-border-dark);
-        }
-        
-        /* Fix for the blue bold text in dark mode */
-        body.dark-mode .summary-panel strong,
-        body.dark-mode .message-bubble strong {
-            color: var(--accent-text-dark);
-            font-weight: 600;
-        }
-        
-        .chat-container {
-            background-color: var(--glass-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border-radius: 12px;
-            padding: 12px;
-            height: 150px;
-            overflow-y: auto;
-            margin-bottom: 10px;
-            transition: background-color 0.3s ease;
-            border: 1px solid var(--glass-border);
-            max-height: 150px;
-        }
-        
-        body.dark-mode .chat-container {
-            background-color: var(--glass-bg-dark);
-            border-color: var(--glass-border-dark);
-        }
-        
-        .message-bubble {
-            border-radius: 18px;
-            padding: 12px 16px;
-            margin-bottom: 10px;
-            max-width: 85%;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-            transition: background-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
-        }
-        
-        .user-message .message-bubble {
-            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-            color: white;
-            border-bottom-right-radius: 4px;
-        }
-        
-        .bot-message .message-bubble {
-            background-color: white;
-            border-bottom-left-radius: 4px;
-            transition: background-color 0.3s ease;
-        }
-        
-        body.dark-mode .bot-message .message-bubble {
-            background-color: var(--dark-card);
-            color: var(--dark-text);
-            border-bottom-left-radius: 4px;
-        }
-        
-        .system-message .message-bubble {
-            background-color: rgba(74, 107, 250, 0.1);
-            color: var(--primary-color);
-            width: 100%;
-            text-align: center;
-            border-radius: 8px;
-        }
-        
-        .badge {
-            font-weight: 500;
-            padding: 6px 10px;
-            border-radius: 6px;
-        }
-        
-        .badge-slide {
-            background-color: var(--primary-color);
-        }
-        
-        .badge-total {
-            background-color: var(--primary-dark);
-        }
-        
-        .slide-info {
-            padding: 10px 15px;
-            background-color: rgba(74, 107, 250, 0.05);
-            border-radius: 8px;
-            margin-bottom: 15px;
-        }
-        
-        /* Top app bar - glassmorphism */
-        .app-bar {
-            position: sticky;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 60px;
-            background-color: var(--glass-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            z-index: 1000;
+        .panel-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 20px;
-            transition: all 0.3s ease;
-            border-bottom: 1px solid var(--glass-border);
+            margin-bottom: var(--space-3);
         }
         
-        body.dark-mode .app-bar {
-            background-color: var(--glass-bg-dark);
-            border-color: var(--glass-border-dark);
-        }
-        
-        .range-selector {
+        .slide-info {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: var(--space-2);
+            padding: var(--space-2) var(--space-4);
+            background: var(--light-surface-variant);
+            border-radius: var(--radius-pill);
         }
         
-        .theme-toggle {
-            position: relative;
+        body.dark-mode .slide-info {
+            background: var(--dark-surface-variant);
+        }
+        
+        .slide-badge {
+            background: var(--brand-primary);
+            color: var(--light-on-surface);
+            border-radius: var(--radius-pill);
+            padding: var(--space-1) var(--space-3);
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+        
+        .total-badge {
+            background: var(--brand-primary-dark);
+            color: white;
+            border-radius: var(--radius-pill);
+            padding: var(--space-1) var(--space-3);
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+        
+        .goto-container {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        
+        .goto-input {
             width: 60px;
-            height: 30px;
-            border-radius: 15px;
-            background-color: #ddd;
-            cursor: pointer;
-            transition: background-color 0.3s ease;
+            border-top-right-radius: 0;
+            border-bottom-right-radius: 0;
+            text-align: center;
         }
         
-        .theme-toggle.active {
-            background-color: var(--primary-dark);
+        .goto-btn {
+            border-top-left-radius: 0;
+            border-bottom-left-radius: 0;
         }
         
-        .toggle-handle {
-            position: absolute;
-            top: 3px;
-            left: 3px;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            background-color: white;
-            transition: transform 0.3s ease;
+        /* Summary Panel */
+        .summary-container {
+            position: relative;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            transition: all var(--transition-medium);
+        }
+        
+        .summary-panel {
+            background: var(--glass-light-strong);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            padding: var(--space-4);
+            flex: 1;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--brand-primary) var(--light-surface-variant);
+            transition: all var(--transition-medium);
+            margin-bottom: var(--space-4);
+            position: relative;
+            max-height: calc(100% - 180px); /* Ensure scrolling */
+            min-height: 250px;
+        }
+        
+        body.dark-mode .summary-panel {
+            background: var(--glass-dark-strong);
+            scrollbar-color: var(--brand-primary) var(--dark-surface-variant);
+        }
+        
+        .summary-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .summary-panel::-webkit-scrollbar-thumb {
+            background-color: var(--brand-primary);
+            border-radius: var(--radius-pill);
+        }
+        
+        .summary-panel::-webkit-scrollbar-track {
+            background-color: var(--light-surface-variant);
+            border-radius: var(--radius-pill);
+        }
+        
+        body.dark-mode .summary-panel::-webkit-scrollbar-track {
+            background-color: var(--dark-surface-variant);
+        }
+        
+        .summary-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: var(--space-4);
+            padding-bottom: var(--space-3);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        
+        body.dark-mode .summary-header {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .summary-title {
+            font-weight: 600;
+            margin: 0;
+            color: var(--light-on-surface);
+        }
+        
+        body.dark-mode .summary-title {
+            color: var(--dark-on-surface);
+        }
+        
+        .regenerate-btn {
+            padding: var(--space-1) var(--space-3);
+            font-size: 0.75rem;
+            background: rgba(225, 193, 165, 0.1);
+            color: var(--brand-primary-darker);
+            border-radius: var(--radius-pill);
+        }
+        
+        body.dark-mode .regenerate-btn {
+            background: rgba(225, 193, 165, 0.2);
+            color: var(--brand-primary-light);
+        }
+        
+        .summary-content {
+            color: var(--light-on-surface-variant);
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        
+        body.dark-mode .summary-content {
+            color: var(--dark-on-surface-variant);
+        }
+        
+        .summary-loading {
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #FFD700;
+            flex-direction: column;
+            min-height: 150px;
         }
         
-        .theme-toggle.active .toggle-handle {
-            transform: translateX(30px);
-            background-color: #333;
-            color: white;
+        /* Chat Panel */
+        .chat-panel {
+            background: var(--glass-light-strong);
+            border-radius: var(--radius-lg);
+            padding: var(--space-3);
+            transition: all var(--transition-medium);
+            position: relative;
+            flex: 0 0 auto;
+            height: 180px; /* Fixed height */
+            display: flex;
+            flex-direction: column;
+            max-height: 180px; /* Ensure it doesn't grow */
+            margin-bottom: 0; /* Ensure no bottom margin */
         }
         
-        .right-actions {
+        .chat-panel.expanded {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: auto; /* Allow height to be determined by content */
+            max-height: calc(100% - 30px); /* Allow scrolling within panel */
+            z-index: 100;
+            margin-top: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        body.dark-mode .chat-panel {
+            background: var(--glass-dark-strong);
+        }
+        
+        .chat-toggle-btn {
+            position: absolute;
+            top: -20px;
+            right: 20px;
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-pill);
+            background: var(--brand-primary);
+            color: var(--light-on-surface);
+            border: none;
             display: flex;
             align-items: center;
-            gap: 15px;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 10;
+            box-shadow: var(--shadow-md);
+            transition: all var(--transition-fast);
+        }
+        
+        .chat-toggle-btn:hover {
+            background: var(--brand-primary-dark);
+        }
+        
+        .chat-header {
+            margin-bottom: var(--space-3);
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            flex: 0 0 auto;
+        }
+        
+        .chat-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin: 0;
+            color: var(--light-on-surface);
+        }
+        
+        body.dark-mode .chat-title {
+            color: var(--dark-on-surface);
+        }
+        
+        .chat-title i {
+            color: var(--brand-primary);
+        }
+        
+        .chat-messages {
+            overflow-y: auto;
+            flex: 1;
+            padding-right: var(--space-2);
+            margin-bottom: var(--space-4);
+            scrollbar-width: thin;
+            scrollbar-color: var(--brand-primary) var(--light-surface-variant);
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-3);
+            padding: var(--space-2);
+            /* Fixed height calculation to prevent growing */
+            max-height: calc(100% - 80px); /* Account for header and input */
+        }
+        
+        .chat-messages::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        .chat-messages::-webkit-scrollbar-thumb {
+            background-color: var(--brand-primary);
+            border-radius: var(--radius-pill);
+        }
+        
+        .chat-messages::-webkit-scrollbar-track {
+            background-color: var(--light-surface-variant);
+            border-radius: var(--radius-pill);
+        }
+        
+        body.dark-mode .chat-messages::-webkit-scrollbar-track {
+            background-color: var(--dark-surface-variant);
+        }
+        
+        .message {
+            display: flex;
+            animation: message-fade-in var(--transition-medium) ease-out;
+            margin-bottom: var(--space-2);
+            width: 100%;
+        }
+        
+        @keyframes message-fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .message-bubble {
+            padding: var(--space-3) var(--space-4);
+            border-radius: var(--radius-lg);
+            max-width: 85%;
+            line-height: 1.5;
+            position: relative;
+            font-size: 0.9rem;
+        }
+        
+        .user-message {
+            justify-content: flex-end;
+            align-self: flex-end;
+        }
+        
+        .bot-message {
+            justify-content: flex-start;
+            align-self: flex-start;
+        }
+        
+        .system-message {
+            justify-content: center;
+            align-self: center;
+            width: 100%;
+        }
+        
+        .user-message .message-bubble {
+            background: var(--brand-primary);
+            color: var(--light-on-surface);
+            border-bottom-right-radius: var(--radius-sm);
+        }
+        
+        .bot-message .message-bubble {
+            background: var(--light-surface-variant);
+            color: var(--light-on-surface);
+            border-bottom-left-radius: var(--radius-sm);
+        }
+        
+        body.dark-mode .bot-message .message-bubble {
+            background: var(--dark-surface-variant);
+            color: var(--dark-on-surface);
+        }
+        
+        .system-message .message-bubble {
+            background: rgba(225, 193, 165, 0.1);
+            color: var(--light-on-surface-variant);
+            text-align: center;
+            width: 100%;
+        }
+        
+        body.dark-mode .system-message .message-bubble {
+            background: rgba(225, 193, 165, 0.15);
+            color: var(--dark-on-surface-variant);
+        }
+        
+        .chat-input {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            flex: 0 0 auto;
+            margin-top: auto;
+            position: relative;
+        }
+        
+        .chat-input-field {
+            flex: 1;
+            padding: var(--space-3);
+            border-radius: var(--radius-pill);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            background: var(--light-surface-variant);
+            color: var(--light-on-surface);
+            transition: all var(--transition-fast);
+        }
+        
+        .chat-input-field:focus {
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 3px rgba(225, 193, 165, 0.25);
+            outline: none;
+        }
+        
+        body.dark-mode .chat-input-field {
+            background: var(--dark-surface-variant);
+            border-color: rgba(255, 255, 255, 0.1);
+            color: var(--dark-on-surface);
+        }
+        
+        .send-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-pill);
+            background: var(--brand-primary);
+            color: var(--light-on-surface);
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        
+        .send-btn:hover {
+            background: var(--brand-primary-dark);
+        }
+        
+        /* Summary collapsed state */
+        .summary-collapsed .summary-panel {
+            height: 0;
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+            opacity: 0;
+            max-height: 0;
+            min-height: 0;
+        }
+        
+        .summary-collapsed .chat-panel {
+            position: absolute;
+            top: 30px; /* Allow space for toggle button */
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: auto;
+            max-height: calc(100% - 30px);
+            margin-top: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Footer */
+        .app-footer {
+            background: var(--glass-light);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            padding: var(--space-4) 0;
+            text-align: center;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            color: var(--light-on-surface-variant);
+            border-top: 1px solid rgba(255, 255, 255, 0.15);
+            z-index: var(--z-sticky);
+            font-size: 0.9rem;
+        }
+        
+        body.dark-mode .app-footer {
+            background: var(--glass-dark);
+            color: var(--dark-on-surface-variant);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        /* Animations */
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.1);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+        
+        @keyframes slide-up {
+            from {
+                opacity: 0;
+                transform: translateY(40px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* Loading indicators */
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(225, 193, 165, 0.3);
+            border-radius: 50%;
+            border-top-color: var(--brand-primary);
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        
+        .progress-bar {
+            width: 200px;
+            height: 4px;
+            background: rgba(225, 193, 165, 0.2);
+            border-radius: var(--radius-pill);
+            margin-top: var(--space-3);
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .progress-bar::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 30%;
+            background: var(--brand-primary);
+            border-radius: var(--radius-pill);
+            animation: progress 2s infinite;
+        }
+        
+        @keyframes progress {
+            0% {
+                left: -30%;
+                width: 30%;
+            }
+            50% {
+                width: 50%;
+            }
+            100% {
+                left: 100%;
+                width: 30%;
+            }
         }
         
         .typing-indicator {
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 4px;
+            margin-left: var(--space-2);
         }
         
         .typing-indicator span {
-            width: 8px;
-            height: 8px;
-            background-color: var(--light-text);
+            width: 6px;
+            height: 6px;
+            background: var(--brand-primary);
             border-radius: 50%;
-            animation: typing 1s infinite ease-in-out;
-        }
-        
-        .typing-indicator span:nth-child(1) {
-            animation-delay: 0s;
+            animation: typing 1s infinite;
         }
         
         .typing-indicator span:nth-child(2) {
@@ -543,513 +1260,229 @@
                 transform: translateY(0);
             }
             50% {
-                transform: translateY(-5px);
+                transform: translateY(-4px);
             }
         }
         
-        /* Loading overlay for images */
-        .loading-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: rgba(255, 255, 255, 0.7);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10;
-        }
-        
-        body.dark-mode .loading-overlay {
-            background-color: rgba(30, 30, 30, 0.7);
-        }
-        
-        /* Improved placeholder styles */
-        .slide-placeholder {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background-color: #f8f9fa;
-            color: #6c757d;
-            font-size: 0.9rem;
-            text-align: center;
-            padding: 1rem;
-            border-radius: 8px;
-        }
-        
-        body.dark-mode .slide-placeholder {
-            background-color: #2d3748;
-            color: #a0aec0;
-        }
-        
-        /* Enhanced loading indicators */
-        .loading-indicator {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-direction: column;
-            padding: 1rem;
-            text-align: center;
-        }
-        
-        .loading-indicator .progress {
-            width: 100%;
-            max-width: 200px;
-            height: 4px;
-            margin-top: 0.5rem;
-            background-color: rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-            border-radius: 2px;
-        }
-        
-        .loading-indicator .progress-bar {
-            height: 100%;
-            background-color: var(--primary-color);
-            animation: loading-progress 2s infinite;
-        }
-        
-        @keyframes loading-progress {
-            0% { width: 0%; }
-            50% { width: 70%; }
-            100% { width: 100%; }
-        }
-        
-        /* Markdown formatting styles */
-        .message-bubble strong, .summary-panel strong {
-            font-weight: 700;
-        }
-        
-        .message-bubble em, .summary-panel em {
-            font-style: italic;
-        }
-        
-        .message-bubble code, .summary-panel code {
-            background-color: #f0f0f0;
-            border-radius: 3px;
-            padding: 2px 4px;
-        }
-        
-        body.dark-mode .message-bubble code, 
-        body.dark-mode .summary-panel code {
-            background-color: #444;
-            color: #f8f8f8;
-            padding: 2px 4px;
-            border-radius: 3px;
-        }
-        
-        /* Logo styling */
-        .logo-img {
-            object-fit: contain;
-            transition: all 0.2s ease;
-        }
-        
-        /* Footer styling - fixed to bottom */
-        .footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 60px;
-            background-color: var(--glass-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border-top: 1px solid var(--glass-border);
-            color: var(--text-color);
-            font-size: 0.9rem;
-            z-index: 1000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        body.dark-mode .footer {
-            background-color: var(--glass-bg-dark);
-            color: var(--dark-text);
-            border-top: 1px solid var(--glass-border-dark);
-        }
-        
-        /* Mobile Responsiveness */
+        /* Mobile styles */
         @media (max-width: 992px) {
-            /* Hide desktop header and show mobile header */
-            .app-bar {
-                display: none;
-            }
-            
-            .mobile-header {
-                display: block; /* Show on mobile devices */
-            }
-            
-            #results-section {
+            .slide-container, .ai-panel {
                 height: auto;
-                min-height: 100vh;
-                padding-bottom: 80px; /* More space for footer on mobile */
+                min-height: 0;
             }
             
-            .slide-info {
-                flex-direction: column;
+            .slide-viewer {
+                height: 350px;
             }
             
-            .slide-controls {
-                margin-top: 10px;
-                width: 100%;
-            }
-            
-            .slide-controls .input-group {
-                width: 100%;
-            }
-            
-            /* Adjust slide thumbnails for smaller screens */
-            .thumbnail {
-                width: 100px;
-                height: 56px;
-            }
-            
-            /* Ensure chat input is usable on mobile */
-            .input-group {
-                width: 100%;
-            }
-            
-            /* Improve mobile glassmorphism elements */
-            .card, .summary-panel, .chat-container {
-                backdrop-filter: blur(8px);
-                -webkit-backdrop-filter: blur(8px);
-            }
-        }
-        
-        /* Small mobile screens */
-        @media (max-width: 576px) {
-            .card-header h4 {
-                font-size: 1rem;
+            .thumbnails-container {
+                padding: var(--space-2) var(--space-1);
             }
             
             .thumbnail {
-                width: 80px;
-                height: 45px;
-            }
-            
-            /* Make chat interface more compact */
-            .chat-container {
-                height: 120px;
-            }
-            
-            /* Make summary panel scroll properly on small screens */
-            .summary-panel {
-                max-height: 250px;
-            }
-            
-            /* Ensure slide image is properly contained */
-            .slide-img {
-                max-height: 50vh;
-            }
-            
-            /* Adjust footer for small screens */
-            .footer {
-                padding: 5px;
+                width: 90px;
                 height: 50px;
             }
             
-            /* Better spacing on mobile */
-            body {
-                padding-bottom: 50px;
+            .app-header {
+                padding: var(--space-2) var(--space-3);
             }
             
-            /* Reduce blur on mobile for better performance */
-            .glass, .card, .summary-panel, .chat-container, .app-bar, .mobile-header, .footer {
-                backdrop-filter: blur(5px);
-                -webkit-backdrop-filter: blur(5px);
+            .header-logo {
+                height: 30px;
+            }
+            
+            .header-range {
+                display: none;
+            }
+            
+            .panel-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: var(--space-2);
+            }
+            
+            .goto-container {
+                width: 100%;
+            }
+            
+            .goto-input {
+                flex: 1;
+            }
+            
+            .summary-panel {
+                max-height: 300px;
+            }
+            
+            .chat-panel {
+                height: 180px;
+            }
+            
+            /* Mobile navigation controls */
+            .mobile-nav {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-top: var(--space-3);
+                padding: var(--space-2) var(--space-3);
+                background: var(--light-surface-variant);
+                border-radius: var(--radius-pill);
+            }
+            
+            body.dark-mode .mobile-nav {
+                background: var(--dark-surface-variant);
+            }
+            
+            .mobile-nav-control {
+                display: flex;
+                align-items: center;
+                gap: var(--space-2);
+            }
+            
+            .mobile-nav-btn {
+                width: 40px;
+                height: 40px;
+                border-radius: var(--radius-pill);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: var(--light-surface);
+                color: var(--light-on-surface);
+                border: none;
+                box-shadow: var(--shadow-sm);
+            }
+            
+            body.dark-mode .mobile-nav-btn {
+                background: var(--dark-surface);
+                color: var(--dark-on-surface);
+            }
+            
+            /* Fixed position chat for mobile - anchored to bottom */
+            .chat-panel.expanded {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                top: auto; /* Override any top position */
+                height: 70vh; /* Take 70% of viewport height */
+                max-height: 70vh; /* Enforce max height */
+                z-index: 1050;
+                margin: 0;
+                border-bottom-left-radius: 0;
+                border-bottom-right-radius: 0;
+                border-top-left-radius: var(--radius-lg);
+                border-top-right-radius: var(--radius-lg);
+                box-shadow: 0 -5px 25px rgba(0, 0, 0, 0.15);
+            }
+            
+            body.dark-mode .chat-panel.expanded {
+                box-shadow: 0 -5px 25px rgba(0, 0, 0, 0.3);
+            }
+            
+            /* Adjust toggle button position */
+            .chat-panel.expanded .chat-toggle-btn {
+                top: -20px;
+                right: 20px;
+            }
+            
+            /* Improved mobile chat scrolling with fixed heights */
+            .chat-panel.expanded .chat-messages {
+                max-height: calc(70vh - 110px); /* Account for header and input in expanded state */
+                overflow-y: auto;
+            }
+            
+            .summary-collapsed .chat-messages {
+                max-height: calc(100% - 110px);
+            }
+            
+            /* When in collapsed summary state on mobile */
+            .summary-collapsed .chat-panel.expanded {
+                height: 70vh;
+                max-height: 70vh;
+                position: fixed;
+            }
+            
+            /* ... other mobile styles ... */
+        }
+        
+        @media (max-width: 576px) {
+            .upload-card {
+                padding: var(--space-4);
+            }
+            
+            .upload-title {
+                font-size: 1.5rem;
+            }
+            
+            .upload-area {
+                padding: var(--space-4);
+            }
+            
+            .slide-viewer {
+                height: 250px;
+            }
+            
+            .thumbnail {
+                width: 70px;
+                height: 40px;
+            }
+            
+            .slide-control-btn {
+                width: 40px;
+                height: 40px;
+                font-size: 1rem;
+            }
+            
+            .summary-panel {
+                padding: var(--space-3);
+                max-height: 250px;
+            }
+            
+            .chat-panel {
+                height: 180px;
+            }
+            
+            /* Improved mobile chat experience */
+            .summary-collapsed .chat-panel {
+                height: 350px;
+                max-height: 350px;
+            }
+            
+            /* Even more compact for very small screens */
+            .chat-panel.expanded {
+                margin: 0.5rem;
+                height: calc(100vh - 100px);
+            }
+            
+            /* Make sure buttons are finger-sized for touch */
+            .slide-control-btn, .send-btn, .mobile-nav-btn {
+                min-width: 44px;
+                min-height: 44px;
+            }
+            
+            /* Ensure form inputs are large enough for mobile */
+            .chat-input-field, .goto-input {
+                min-height: 44px;
             }
         }
         
-        /* Mobile header - with glassmorphism */
-        .mobile-header {
-            display: none; /* Hidden by default on desktop */
-            position: sticky;
-            top: 0;
-            left: 0;
-            right: 0;
-            z-index: 1000;
-            background-color: var(--glass-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            padding: 8px 12px;
-            transition: all 0.3s ease;
-            border-bottom: 1px solid var(--glass-border);
+        /* Enhanced glassmorphism for cards and panel elements */
+        .card, .summary-panel, .chat-panel, .upload-card, .app-header, .app-footer, .slide-viewer {
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
         }
         
-        body.dark-mode .mobile-header {
-            background-color: var(--glass-bg-dark);
-            border-color: var(--glass-border-dark);
-        }
-        
-        .mobile-header-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .mobile-header-title {
-            display: flex;
-            align-items: center;
-            font-size: 1rem;
-            font-weight: 600;
-            font-family: 'Montserrat', sans-serif;
-        }
-        
-        .mobile-header-actions {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .mobile-theme-toggle {
-            width: 44px;
-            height: 22px;
-            border-radius: 11px;
-            background-color: #ddd;
-            cursor: pointer;
-            position: relative;
-            transition: background-color 0.3s ease;
-        }
-        
-        .mobile-theme-toggle.active {
-            background-color: var(--primary-dark);
-        }
-        
-        .mobile-toggle-handle {
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background-color: white;
-            transition: transform 0.3s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 10px;
-            color: #FFD700;
-        }
-        
-        .mobile-theme-toggle.active .mobile-toggle-handle {
-            transform: translateX(22px);
-            background-color: #333;
-            color: white;
-        }
-        
-        .mobile-controls {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding-top: 5px;
-            margin-top: 5px;
-            border-top: 1px solid rgba(0,0,0,0.05);
-        }
-        
-        body.dark-mode .mobile-controls {
-            border-top-color: rgba(255,255,255,0.05);
-        }
-        
-        .mobile-slide-info {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        
-        .mobile-nav-controls {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .mobile-nav-btn {
-            border: none;
-            background-color: rgba(74, 107, 250, 0.1);
-            color: var(--primary-color);
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: background-color 0.2s ease;
-        }
-        
-        .mobile-nav-btn:hover {
-            background-color: rgba(74, 107, 250, 0.2);
-        }
-        
-        .mobile-nav-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        .mobile-goto {
-            display: flex;
-            align-items: center;
-            position: relative;
-            width: 32px;
-            height: 30px;
-            overflow: hidden;
-            transition: width 0.3s ease;
-        }
-        
-        .mobile-goto.expanded {
-            width: 90px;
-        }
-        
-        .mobile-goto-btn {
-            position: absolute;
-            right: 0;
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            width: 32px;
-            height: 30px;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            z-index: 2;
-        }
-        
-        .mobile-goto-input {
-            position: absolute;
-            left: 0;
-            width: 60px;
-            height: 30px;
-            border: 1px solid var(--primary-color);
-            border-radius: 4px;
-            padding: 0 5px;
-            font-size: 0.8rem;
-            text-align: center;
-        }
-        
-        .mobile-range {
-            margin-top: 5px;
-            padding-top: 5px;
-            border-top: 1px solid rgba(0,0,0,0.05);
-            display: none; /* Hidden by default, toggled by JS */
-        }
-        
-        body.dark-mode .mobile-range {
-            border-top-color: rgba(255,255,255,0.05);
-        }
-        
-        .mobile-range.visible {
-            display: block;
-        }
-        
-        .mobile-range-container {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .mobile-range-label {
-            font-size: 0.8rem;
-            color: var(--light-text);
-        }
-        
-        .mobile-range-inputs {
-            display: flex;
-            align-items: center;
-            flex-grow: 1;
-            gap: 5px;
-        }
-        
-        .mobile-range-input {
-            width: 100%;
-            height: 30px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            padding: 0 5px;
-            font-size: 0.8rem;
-            text-align: center;
-        }
-        
-        .mobile-range-submit {
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            height: 30px;
-            padding: 0 10px;
-            border-radius: 4px;
-            font-size: 0.8rem;
-            cursor: pointer;
-        }
-        
-        /* Modify the logo in the header to be bigger */
-        .app-bar .logo-img {
-            height: 50px !important; /* Make logo bigger in desktop header */
-        }
-        
-        .logo-container {
-            padding: 2px !important;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        }
-        
-        /* Make mobile logo bigger too */
-        .mobile-header .logo-img {
-            height: 40px !important;
-        }
-        
-        /* Improve the Upload New button to match design */
-        #back-to-upload-btn {
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            padding: 8px 16px;
-            font-weight: 500;
-            transition: all 0.2s ease;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        
-        #back-to-upload-btn:hover {
-            background-color: var(--primary-dark);
-            transform: translateY(-1px);
-            box-shadow: 0 3px 6px rgba(0, 0, 0, 0.15);
-        }
-        
-        body.dark-mode #back-to-upload-btn {
-            background-color: var(--primary-dark);
-            color: white;
-        }
-        
-        /* Regenerate button styling */
-        #regenerate-summary {
-            background-color: var(--primary-light);
-            color: var(--accent-color);
-            border: none;
-            border-radius: 4px;
-            font-size: 0.8rem;
-            padding: 4px 8px;
-            transition: all 0.2s ease;
-        }
-        
-        #regenerate-summary:hover {
-            background-color: var(--primary-color);
-            color: white;
-            transform: translateY(-1px);
-        }
-        
-        body.dark-mode #regenerate-summary {
-            background-color: var(--dark-card);
-            color: var(--primary-light);
-            border: 1px solid var(--primary-light);
-        }
-        
-        body.dark-mode #regenerate-summary:hover {
-            background-color: var(--primary-dark);
-            color: var(--dark-text);
+        body.dark-mode .card, 
+        body.dark-mode .summary-panel, 
+        body.dark-mode .chat-panel,
+        body.dark-mode .upload-card, 
+        body.dark-mode .app-header, 
+        body.dark-mode .app-footer,
+        body.dark-mode .slide-viewer {
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
         }
     </style>
 </head>
@@ -1057,239 +1490,151 @@
     <div id="app-container">
         <!-- Upload Section -->
         <div id="upload-section">
-            <div class="container-fluid py-4">
-                <div class="row justify-content-center">
-                    <div class="col-md-8 col-lg-6">
-                        <div class="card shadow">
-                            <div class="card-header p-4">
-                                <h2 class="mb-0 text-center">
-                                    <div class="logo-container p-2 rounded shadow-sm d-inline-block">
-                                        <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="logo-img me-2" height="60">
-                                    </div>
-                                </h2>
+            <div class="upload-container">
+                <div class="upload-card">
+                    <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="upload-logo">
+                    <h1 class="upload-title">Upload Your Presentation</h1>
+                    <p class="upload-description">Upload your slides (PDF format) for AI-powered analysis and summaries</p>
+                    
+                    <form id="upload-form" enctype="multipart/form-data">
+                        <label for="slide-file" class="d-block">
+                            <div class="upload-area">
+                                <input type="file" id="slide-file" name="file" accept=".pdf" class="d-none">
+                                <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                                <p class="upload-text">Drag & drop your PDF file here<br>or click to browse</p>
                             </div>
-                            <div class="card-body p-5">
-                                <div class="text-center mb-4">
-                                    <h3>Upload Your Presentation</h3>
-                                    <p class="upload-description">Upload your slides (PDF format) for AI-powered analysis and summaries</p>
-                                </div>
-                                
-                                <form id="upload-form" enctype="multipart/form-data">
-                                    <div class="mb-4 text-center">
-                                        <label for="slide-file" class="form-label d-block">
-                                            <div class="upload-area p-5 border border-2 border-dashed rounded-3 cursor-pointer">
-                                                <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
-                                                <p>Drag & drop your PDF file here<br>or click to browse</p>
-                                            </div>
-                                        </label>
-                                        <input type="file" class="form-control d-none" id="slide-file" name="file" accept=".pdf">
-                                        <div id="file-name" class="mt-2"></div>
-                                    </div>
-                                    
-                                    <div class="text-center">
-                                        <button type="submit" class="btn btn-primary btn-lg px-5 py-2">
-                                            <i class="fas fa-upload me-2"></i>Upload & Analyze
-                                        </button>
-                                    </div>
-                                </form>
-                                
-                                <div id="upload-status" class="alert mt-4 text-center" style="display: none;"></div>
-                            </div>
-                        </div>
-                    </div>
+                        </label>
+                        
+                        <div id="file-name"></div>
+                        
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="fas fa-upload me-2"></i>Upload & Analyze
+                        </button>
+                    </form>
+                    
+                    <div id="upload-status" class="mt-4 text-center" style="display: none;"></div>
                 </div>
             </div>
         </div>
         
-        <!-- Results Section (Google Slides Style) -->
-        <div id="results-section" style="display: none;">
-            <!-- Desktop Header - Original Design -->
-            <div class="app-bar mb-3">
-                <div class="left-section">
-                    <div class="logo-container p-2 rounded shadow-sm">
-                        <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="logo-img me-2" height="45">
-                    </div>
-                </div>
-                <div class="range-selector">
-                    <label for="slide-range-start">Show slides</label>
-                    <input type="number" id="slide-range-start" class="form-control form-control-sm" style="width: 60px;" min="1" value="1">
-                    <span>to</span>
-                    <input type="number" id="slide-range-end" class="form-control form-control-sm" style="width: 60px;" min="1" value="10">
-                    <button id="apply-range-btn" class="btn btn-sm btn-primary">Apply</button>
-                </div>
-                <div class="right-actions">
-                    <button id="back-to-upload-btn" class="btn">
-                        <i class="fas fa-arrow-left me-1"></i>Upload New
-                    </button>
-                    <div class="d-flex align-items-center">
-                        <div id="theme-toggle" class="theme-toggle">
-                            <div class="toggle-handle">
-                                <i class="fas fa-sun"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Mobile Header -->
-            <div class="mobile-header">
-                <div class="mobile-header-top">
-                    <div class="mobile-header-title">
-                        <div class="logo-container p-1 rounded shadow-sm me-2">
-                            <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="logo-img" height="35">
-                        </div>
-                    </div>
-                    <div class="mobile-header-actions">
-                        <button id="mobile-range-toggle" class="mobile-nav-btn">
-                            <i class="fas fa-sliders-h"></i>
-                        </button>
-                        <button id="mobile-back-btn" class="mobile-nav-btn">
-                            <i class="fas fa-arrow-left"></i>
-                        </button>
-                        <div id="mobile-theme-toggle" class="mobile-theme-toggle">
-                            <div class="mobile-toggle-handle">
-                                <i class="fas fa-sun"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="mobile-controls">
-                    <div class="mobile-slide-info">
-                        <span class="badge badge-slide" id="mobile-current-slide">1</span>
-                        <span class="badge badge-total" id="mobile-total-slides">/ 10</span>
-                    </div>
-                    <div class="mobile-nav-controls">
-                        <button id="mobile-prev-slide" class="mobile-nav-btn">
-                            <i class="fas fa-chevron-left"></i>
-                        </button>
-                        <div id="mobile-goto" class="mobile-goto">
-                            <input type="number" id="mobile-goto-input" class="mobile-goto-input" min="1">
-                            <button id="mobile-goto-btn" class="mobile-goto-btn">
-                                <i class="fas fa-search"></i>
-                            </button>
-                        </div>
-                        <button id="mobile-next-slide" class="mobile-nav-btn">
-                            <i class="fas fa-chevron-right"></i>
-                        </button>
-                    </div>
-                </div>
-                <div id="mobile-range" class="mobile-range">
-                    <div class="mobile-range-container">
-                        <span class="mobile-range-label">Range:</span>
-                        <div class="mobile-range-inputs">
-                            <input type="number" id="mobile-range-start" class="mobile-range-input" min="1" value="1">
+        <!-- Results Section -->
+        <div id="results-section">
+            <!-- App Header -->
+            <header class="app-header">
+                <div class="container">
+                    <div class="header-content">
+                        <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="header-logo">
+                        
+                        <div class="header-range">
+                            <label for="slide-range-start">Show slides</label>
+                            <input type="number" id="slide-range-start" class="form-control form-control-sm" min="1" value="1">
                             <span>to</span>
-                            <input type="number" id="mobile-range-end" class="mobile-range-input" min="1" value="10">
+                            <input type="number" id="slide-range-end" class="form-control form-control-sm" min="1" value="10">
+                            <button id="apply-range-btn" class="btn btn-primary btn-sm">Apply</button>
                         </div>
-                        <button id="mobile-range-submit" class="mobile-range-submit">Apply</button>
+                        
+                        <div class="header-actions">
+                            <button id="back-to-upload-btn" class="btn btn-outline">
+                                <i class="fas fa-arrow-left me-1"></i>Upload New
+                            </button>
+                            
+                            <div id="theme-toggle" class="theme-switch">
+                                <div class="switch-handle">
+                                    <i class="fas fa-sun"></i>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
+            </header>
             
-            <div class="container-fluid">
+            <div class="container">
                 <div class="row g-4">
                     <!-- Left Column: Slide Viewer -->
                     <div class="col-lg-8">
-                        <div class="card shadow h-100">
-                            <div class="card-header p-3 d-flex justify-content-between align-items-center">
-                                <h4 class="mb-0"><i class="fas fa-presentation me-2"></i>Slide View</h4>
-                            </div>
-                            <div class="card-body p-0 d-flex flex-column">
-                                <!-- Main Slide Viewer -->
-                                <div class="slide-viewer flex-grow-1 p-3">
-                                    <div class="d-flex align-items-center justify-content-center h-100">
-                                        <div class="position-relative" style="width: 100%; height: 100%;">
-                                            <div id="current-slide" class="d-flex align-items-center justify-content-center h-100">
-                                                <div class="text-center p-5">
-                                                    <div class="spinner-border text-primary" role="status">
-                                                        <span class="visually-hidden">Loading...</span>
-                                                    </div>
-                                                    <p class="mt-3">Loading slides...</p>
-                                                </div>
-                                            </div>
-                                            <div class="slide-navigation-controls">
-                                                <button id="prev-slide" class="nav-btn">
-                                                    <i class="fas fa-chevron-left"></i>
-                                                </button>
-                                                <button id="next-slide" class="nav-btn">
-                                                    <i class="fas fa-chevron-right"></i>
-                                                </button>
-                                            </div>
-                                        </div>
+                        <div class="slide-container">
+                            <div class="slide-viewer">
+                                <div id="current-slide" class="slide-content">
+                                    <div class="slide-loading">
+                                        <div class="spinner"></div>
+                                        <p class="mt-3">Loading slide...</p>
+                                        <div class="progress-bar"></div>
                                     </div>
                                 </div>
                                 
-                                <!-- Thumbnail Navigation -->
-                                <div class="border-top p-2">
-                                    <div class="thumbnail-container" id="slide-thumbnails">
-                                        <!-- Thumbnails will be added here by JavaScript -->
-                                    </div>
+                                <div class="slide-controls">
+                                    <button id="prev-slide" class="slide-control-btn">
+                                        <i class="fas fa-chevron-left"></i>
+                                    </button>
+                                    <button id="next-slide" class="slide-control-btn">
+                                        <i class="fas fa-chevron-right"></i>
+                                    </button>
                                 </div>
+                            </div>
+                            
+                            <div id="slide-thumbnails" class="thumbnails-container">
+                                <!-- Thumbnails will be added here by JavaScript -->
                             </div>
                         </div>
                     </div>
                     
-                    <!-- Right Column: Summary and Chat -->
+                    <!-- Right Column: AI Analysis -->
                     <div class="col-lg-4">
-                        <div class="card shadow h-100">
-                            <div class="card-header p-3">
-                                <h4 class="mb-0"><i class="fas fa-brain me-2"></i>AI Analysis</h4>
+                        <div class="ai-panel">
+                            <div class="panel-header">
+                                <div class="slide-info">
+                                    <span id="current-slide-num" class="slide-badge">Slide 1</span>
+                                    <span id="total-slides" class="total-badge">of 10</span>
+                                </div>
+                                
+                                <div class="goto-container">
+                                    <input type="number" id="goto-slide" class="form-control form-control-sm goto-input" placeholder="Go to" min="1">
+                                    <button id="goto-btn" class="btn btn-primary btn-sm goto-btn">
+                                        <i class="fas fa-arrow-right"></i>
+                                    </button>
+                                </div>
                             </div>
-                            <div class="card-body p-0">
-                                <div class="d-flex flex-column h-100">
-                                    <!-- Summary Section -->
-                                    <div class="p-3 flex-grow-1 d-flex flex-column">
-                                        <div class="slide-info d-flex justify-content-between flex-wrap">
-                                            <div>
-                                                <span class="badge badge-slide" id="current-slide-num">Slide 1</span>
-                                                <span class="badge badge-total" id="total-slides">of 10</span>
-                                            </div>
-                                            <div class="slide-controls">
-                                                <div class="input-group input-group-sm" style="width: 150px;">
-                                                    <input type="number" id="goto-slide" class="form-control" placeholder="Go to slide" min="1">
-                                                    <button id="goto-btn" class="btn btn-primary btn-sm">
-                                                        <i class="fas fa-arrow-right"></i>
-                                                    </button>
-                                                </div>
+                            
+                            <div id="summary-container" class="summary-container">
+                                <div class="summary-panel">
+                                    <div class="summary-header">
+                                        <h3 id="slide-title" class="summary-title">Slide Title</h3>
+                                        <button id="regenerate-summary" class="btn regenerate-btn" title="Regenerate Summary">
+                                            <i class="fas fa-redo-alt"></i> Regenerate
+                                        </button>
+                                    </div>
+                                    
+                                    <div id="slide-summary" class="summary-content">
+                                        <div class="summary-loading">
+                                            <div class="spinner"></div>
+                                            <p class="mt-3">Generating summary...</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Chat Panel -->
+                                <div id="chat-panel" class="chat-panel">
+                                    <button id="toggle-chat-btn" class="chat-toggle-btn" title="Toggle chat">
+                                        <i class="fas fa-comments"></i>
+                                    </button>
+                                    
+                                    <div class="chat-header">
+                                        <h4 class="chat-title"><i class="fas fa-comments me-2"></i>Ask about this slide</h4>
+                                    </div>
+                                    
+                                    <div id="chat-messages" class="chat-messages">
+                                        <div class="message system-message">
+                                            <div class="message-bubble">
+                                                Hello! Ask me anything about this slide or the entire presentation.
                                             </div>
                                         </div>
-                                        
-                                        <div class="summary-panel mb-3">
-                                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                                <h5 class="mb-0" id="slide-title">Slide Title</h5>
-                                                <button id="regenerate-summary" class="btn btn-sm" title="Regenerate Summary">
-                                                    <i class="fas fa-redo-alt"></i> Regenerate
-                                                </button>
-                                            </div>
-                                            <div id="slide-summary">
-                                                <div class="text-center p-4">
-                                                    <div class="spinner-border text-primary" role="status">
-                                                        <span class="visually-hidden">Loading...</span>
-                                                    </div>
-                                                    <p class="mt-3">Generating summary...</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        
-                                        <!-- Chat Section -->
-                                        <div class="p-3 border-top mt-auto">
-                                            <h5 class="mb-2 fs-6 fs-md-5"><i class="fas fa-comments text-primary me-2"></i>Ask about this slide</h5>
-                                            
-                                            <div id="chat-messages" class="chat-container mb-3">
-                                                <div class="system-message">
-                                                    <div class="message-bubble">
-                                                        <p class="mb-0">Hello! Ask me anything about this slide or the entire presentation.</p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            
-                                            <div class="input-group">
-                                                <input type="text" id="user-input" class="form-control" placeholder="Ask a question...">
-                                                <button id="send-btn" class="btn btn-primary">
-                                                    <i class="fas fa-paper-plane"></i>
-                                                </button>
-                                            </div>
-                                        </div>
+                                    </div>
+                                    
+                                    <div class="chat-input">
+                                        <input type="text" id="user-input" class="chat-input-field" placeholder="Ask a question...">
+                                        <button id="send-btn" class="send-btn">
+                                            <i class="fas fa-paper-plane"></i>
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -1297,198 +1642,271 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Footer -->
+            <footer class="app-footer">
+                <div class="container">
+                    <p class="mb-0">Sumora by Kauzway.ai</p>
+                </div>
+            </footer>
         </div>
-        
-        <!-- Footer -->
-        <footer class="footer">
-            <div class="container text-center py-3">
-                <p class="mb-0">Sumora by Kauzway.ai</p>
-            </div>
-        </footer>
     </div>
-
+    
+    <!-- Reference the original script.js for API connections -->
     <script src="/static/js/script.js"></script>
     <script>
-        // Mobile header functionality
         document.addEventListener('DOMContentLoaded', function() {
-            // Theme toggle sync between desktop and mobile
-            const desktopThemeToggle = document.getElementById('theme-toggle');
-            const mobileThemeToggle = document.getElementById('mobile-theme-toggle');
-            
-            // Sync desktop theme toggle to mobile
-            mobileThemeToggle.addEventListener('click', function() {
-                mobileThemeToggle.classList.toggle('active');
-                
-                // Sync with desktop toggle
-                if (mobileThemeToggle.classList.contains('active') !== desktopThemeToggle.classList.contains('active')) {
-                    desktopThemeToggle.click(); // Trigger the desktop toggle click event
-                }
-            });
-            
-            // Range toggle functionality for mobile
-            const mobileRangeToggle = document.getElementById('mobile-range-toggle');
-            const mobileRange = document.getElementById('mobile-range');
-            
-            mobileRangeToggle.addEventListener('click', function() {
-                mobileRange.classList.toggle('visible');
-                mobileRangeToggle.classList.toggle('active');
-                
-                // Add highlight effect for toggle button
-                if (mobileRangeToggle.classList.contains('active')) {
-                    mobileRangeToggle.style.backgroundColor = 'rgba(74, 107, 250, 0.2)';
-                } else {
-                    mobileRangeToggle.style.backgroundColor = 'rgba(74, 107, 250, 0.1)';
-                }
-            });
-            
-            // Sync slide range inputs between desktop and mobile
-            const desktopRangeStart = document.getElementById('slide-range-start');
-            const desktopRangeEnd = document.getElementById('slide-range-end');
-            const mobileRangeStart = document.getElementById('mobile-range-start');
-            const mobileRangeEnd = document.getElementById('mobile-range-end');
-            const desktopApplyBtn = document.getElementById('apply-range-btn');
-            const mobileApplyBtn = document.getElementById('mobile-range-submit');
-            
-            // Sync desktop to mobile
-            desktopRangeStart.addEventListener('change', function() {
-                mobileRangeStart.value = desktopRangeStart.value;
-            });
-            
-            desktopRangeEnd.addEventListener('change', function() {
-                mobileRangeEnd.value = desktopRangeEnd.value;
-            });
-            
-            // Sync mobile to desktop
-            mobileRangeStart.addEventListener('change', function() {
-                desktopRangeStart.value = mobileRangeStart.value;
-            });
-            
-            mobileRangeEnd.addEventListener('change', function() {
-                desktopRangeEnd.value = mobileRangeEnd.value;
-            });
-            
-            // Make mobile apply button trigger desktop apply button
-            mobileApplyBtn.addEventListener('click', function() {
-                desktopApplyBtn.click();
-                // Hide range selector after applying
-                mobileRange.classList.remove('visible');
-                mobileRangeToggle.classList.remove('active');
-                mobileRangeToggle.style.backgroundColor = 'rgba(74, 107, 250, 0.1)';
-            });
-            
-            // Sync mobile slide indicators with desktop
-            const mobileCurrentSlide = document.getElementById('mobile-current-slide');
-            const mobileTotalSlides = document.getElementById('mobile-total-slides');
-            const desktopCurrentSlide = document.getElementById('current-slide-num');
-            const desktopTotalSlides = document.getElementById('total-slides');
-            
-            // Function to update mobile slide indicators
-            function updateMobileSlideIndicators() {
-                const currentText = desktopCurrentSlide.textContent;
-                const totalText = desktopTotalSlides.textContent;
-                
-                if (currentText.includes('Slide')) {
-                    const currentNumber = currentText.replace('Slide ', '');
-                    mobileCurrentSlide.textContent = currentNumber;
-                }
-                
-                if (totalText.includes('of')) {
-                    const totalNumber = totalText.replace('of ', '');
-                    mobileTotalSlides.textContent = '/ ' + totalNumber;
-                }
-            }
-            
-            // MutationObserver to watch for changes in the desktop indicators
-            const slideObserver = new MutationObserver(updateMobileSlideIndicators);
-            slideObserver.observe(desktopCurrentSlide, { childList: true, characterData: true, subtree: true });
-            slideObserver.observe(desktopTotalSlides, { childList: true, characterData: true, subtree: true });
-            
-            // Mobile navigation buttons
-            const mobilePrevBtn = document.getElementById('mobile-prev-slide');
-            const mobileNextBtn = document.getElementById('mobile-next-slide');
-            const desktopPrevBtn = document.getElementById('prev-slide');
-            const desktopNextBtn = document.getElementById('next-slide');
-            
-            mobilePrevBtn.addEventListener('click', function() {
-                desktopPrevBtn.click();
-            });
-            
-            mobileNextBtn.addEventListener('click', function() {
-                desktopNextBtn.click();
-            });
-            
-            // Mobile goto slide
-            const mobileGotoContainer = document.getElementById('mobile-goto');
-            const mobileGotoInput = document.getElementById('mobile-goto-input');
-            const mobileGotoBtn = document.getElementById('mobile-goto-btn');
-            const desktopGotoInput = document.getElementById('goto-slide');
-            const desktopGotoBtn = document.getElementById('goto-btn');
-            
-            // Expand input on click
-            mobileGotoBtn.addEventListener('click', function() {
-                if (!mobileGotoContainer.classList.contains('expanded')) {
-                    mobileGotoContainer.classList.add('expanded');
-                    mobileGotoInput.focus();
-                } else {
-                    // If already expanded and has a value, go to that slide
-                    if (mobileGotoInput.value.trim() !== '') {
-                        desktopGotoInput.value = mobileGotoInput.value;
-                        desktopGotoBtn.click();
-                    }
-                    mobileGotoContainer.classList.remove('expanded');
-                }
-            });
-            
-            // Handle Enter key on mobile goto input
-            mobileGotoInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter' && mobileGotoInput.value.trim() !== '') {
-                    desktopGotoInput.value = mobileGotoInput.value;
-                    desktopGotoBtn.click();
-                    mobileGotoContainer.classList.remove('expanded');
-                }
-            });
-            
-            // Click outside to collapse goto input
-            document.addEventListener('click', function(e) {
-                if (!mobileGotoContainer.contains(e.target) && mobileGotoContainer.classList.contains('expanded')) {
-                    mobileGotoContainer.classList.remove('expanded');
-                }
-            });
-            
-            // Link mobile back button to desktop back button
-            const mobileBackBtn = document.getElementById('mobile-back-btn');
-            const desktopBackBtn = document.getElementById('back-to-upload-btn');
-            
-            mobileBackBtn.addEventListener('click', function() {
-                desktopBackBtn.click();
-            });
-            
-            // Initial update of mobile slide indicators
-            updateMobileSlideIndicators();
-        });
-
-        // Add file name display enhancement
-        document.addEventListener('DOMContentLoaded', function() {
+            // File Upload Handler
             const fileInput = document.getElementById('slide-file');
             const fileNameDisplay = document.getElementById('file-name');
+            const uploadForm = document.getElementById('upload-form');
+            const uploadSection = document.getElementById('upload-section');
+            const resultsSection = document.getElementById('results-section');
+            const backToUploadBtn = document.getElementById('back-to-upload-btn');
             
+            // Display filename when file is selected
             fileInput.addEventListener('change', function() {
                 if (this.files && this.files.length > 0) {
                     const fileName = this.files[0].name;
-                    fileNameDisplay.innerHTML = `<i class="fas fa-file-pdf me-1"></i> ${fileName}`;
-                    fileNameDisplay.style.display = 'inline-block';
+                    fileNameDisplay.innerHTML = `<i class="fas fa-file-pdf me-2"></i>${fileName}`;
+                    fileNameDisplay.style.display = 'block';
                 } else {
                     fileNameDisplay.textContent = '';
                     fileNameDisplay.style.display = 'none';
                 }
             });
             
-            // Theme toggle sync between desktop and mobile
-            const desktopThemeToggle = document.getElementById('theme-toggle');
-            const mobileThemeToggle = document.getElementById('mobile-theme-toggle');
+            // Completely revised theme toggle implementation
+            const themeToggle = document.getElementById('theme-toggle');
             
-            // ... existing code ...
+            // Direct event binding with priority on click handling
+            if (themeToggle) {
+                // Forcibly remove any existing event listeners
+                themeToggle.replaceWith(themeToggle.cloneNode(true));
+                
+                // Get the fresh reference
+                const freshThemeToggle = document.getElementById('theme-toggle');
+                
+                // Set initial state based on localStorage or system preference
+                const prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const savedDarkMode = localStorage.getItem('darkMode');
+                const isDarkMode = savedDarkMode ? savedDarkMode === 'true' : prefersDarkMode;
+                
+                // Initial setup
+                if (isDarkMode) {
+                    document.body.classList.add('dark-mode');
+                    freshThemeToggle.classList.add('active');
+                    const handleIcon = freshThemeToggle.querySelector('.switch-handle i');
+                    if (handleIcon) {
+                        handleIcon.className = 'fas fa-moon';
+                    }
+                }
+                
+                // Store the preference
+                localStorage.setItem('darkMode', isDarkMode);
+                
+                // Direct click handler - most reliable method
+                freshThemeToggle.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Toggle dark mode class on body
+                    document.body.classList.toggle('dark-mode');
+                    // Toggle active class on switch
+                    freshThemeToggle.classList.toggle('active');
+                    
+                    // Update icon
+                    const isDark = document.body.classList.contains('dark-mode');
+                    const handleIcon = freshThemeToggle.querySelector('.switch-handle i');
+                    if (handleIcon) {
+                        handleIcon.className = isDark ? 'fas fa-moon' : 'fas fa-sun';
+                    }
+                    
+                    // Store the preference
+                    localStorage.setItem('darkMode', isDark);
+                    
+                    // Debugging
+                    console.log('Theme toggled. Dark mode:', isDark);
+                    return true;
+                };
+            }
+            
+            // Chat toggle functionality with improved scrolling behavior
+            const toggleChatBtn = document.getElementById('toggle-chat-btn');
+            const summaryContainer = document.getElementById('summary-container');
+            const chatPanel = document.getElementById('chat-panel');
+            const chatMessages = document.getElementById('chat-messages');
+            
+            toggleChatBtn.addEventListener('click', function() {
+                summaryContainer.classList.toggle('summary-collapsed');
+                chatPanel.classList.toggle('expanded');
+                
+                const chatIcon = toggleChatBtn.querySelector('i');
+                if (summaryContainer.classList.contains('summary-collapsed')) {
+                    toggleChatBtn.title = 'Show summary';
+                    chatIcon.className = 'fas fa-file-alt';
+                    
+                    // Scroll chat messages to bottom after transition
+                    setTimeout(() => {
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                    }, 300);
+                } else {
+                    toggleChatBtn.title = 'Expand chat';
+                    chatIcon.className = 'fas fa-comments';
+                }
+            });
+            
+            // Chat functionality
+            const userInput = document.getElementById('user-input');
+            const sendBtn = document.getElementById('send-btn');
+            
+            // Add chat messages handling
+            function addChatMessage(message, type) {
+                const messageEl = document.createElement('div');
+                messageEl.className = `message ${type}-message`;
+                
+                const bubbleEl = document.createElement('div');
+                bubbleEl.className = 'message-bubble';
+                bubbleEl.innerHTML = message;
+                
+                messageEl.appendChild(bubbleEl);
+                chatMessages.appendChild(messageEl);
+                
+                // Scroll to bottom
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            
+            // Send message on Enter key
+            userInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && this.value.trim()) {
+                    sendUserMessage();
+                }
+            });
+            
+            // Send message on button click
+            sendBtn.addEventListener('click', function() {
+                if (userInput.value.trim()) {
+                    sendUserMessage();
+                }
+            });
+            
+            function sendUserMessage() {
+                const message = userInput.value.trim();
+                addChatMessage(message, 'user');
+                userInput.value = '';
+                
+                // Show typing indicator
+                const typingEl = document.createElement('div');
+                typingEl.className = 'message bot-message typing';
+                typingEl.innerHTML = `
+                    <div class="message-bubble">
+                        Typing<span class="typing-indicator"><span></span><span></span><span></span></span>
+                    </div>
+                `;
+                chatMessages.appendChild(typingEl);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                
+                // Simulate bot response
+                setTimeout(() => {
+                    // Remove typing indicator
+                    chatMessages.removeChild(typingEl);
+                    
+                    // Add bot response
+                    const botResponses = [
+                        "I've analyzed this slide for you. The key points are the quarterly revenue growth of 15% and market expansion into three new regions.",
+                        "This slide shows our new product features that will be released next month. The main highlight is the improved user interface.",
+                        "Looking at the data from this slide, I can see that our customer satisfaction scores have increased by 8% since implementing the new support system.",
+                        "This slide contains important information about our competitive landscape. The most significant change is Competitor X's new product line."
+                    ];
+                    
+                    const randomResponse = botResponses[Math.floor(Math.random() * botResponses.length)];
+                    addChatMessage(randomResponse, 'bot');
+                }, 1500);
+            }
+            
+            // Improve mobile experience
+            function enhanceMobileExperience() {
+                const isMobile = window.innerWidth < 992;
+                
+                // Add swipe gestures for mobile
+                if (isMobile) {
+                    // Handle touch events for the slide viewer
+                    const slideViewer = document.querySelector('.slide-viewer');
+                    if (slideViewer) {
+                        let touchStartX = 0;
+                        let touchEndX = 0;
+                        
+                        slideViewer.addEventListener('touchstart', function(e) {
+                            touchStartX = e.changedTouches[0].screenX;
+                        }, false);
+                        
+                        slideViewer.addEventListener('touchend', function(e) {
+                            touchEndX = e.changedTouches[0].screenX;
+                            handleSwipe();
+                        }, false);
+                        
+                        function handleSwipe() {
+                            const prevBtn = document.getElementById('prev-slide');
+                            const nextBtn = document.getElementById('next-slide');
+                            
+                            if (touchEndX < touchStartX - 50) {
+                                // Swipe left (next slide)
+                                if (nextBtn) nextBtn.click();
+                            } else if (touchEndX > touchStartX + 50) {
+                                // Swipe right (previous slide)
+                                if (prevBtn) prevBtn.click();
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Update mobile slide indicator
+            function updateMobileSlideIndicator() {
+                // Function removed as we no longer have the mobile text indicator
+            }
+            
+            // Call on page load and resize
+            enhanceMobileExperience();
+            window.addEventListener('resize', enhanceMobileExperience);
+            
+            // Monitor slide changes - Modified to remove mobile indicator updates
+            const slides = document.querySelectorAll('.thumbnail');
+            if (slides.length) {
+                slides.forEach(slide => {
+                    slide.addEventListener('click', function() {
+                        // No longer calling updateMobileSlideIndicator
+                    });
+                });
+                
+                // No longer updating mobile indicator
+                document.getElementById('prev-slide').addEventListener('click', function() {});
+                document.getElementById('next-slide').addEventListener('click', function() {});
+                document.getElementById('goto-btn').addEventListener('click', function() {});
+            }
+        });
+    </script>
+
+    <!-- Add script to ensure light mode is default at start -->
+    <script>
+        // Force light mode as default on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Make sure dark mode is removed
+            document.body.classList.remove('dark-mode');
+            
+            // Reset toggle button if it exists
+            const themeToggle = document.getElementById('theme-toggle');
+            if (themeToggle) {
+                themeToggle.classList.remove('active');
+                const handleIcon = themeToggle.querySelector('.switch-handle i');
+                if (handleIcon) {
+                    handleIcon.className = 'fas fa-sun';
+                }
+            }
+            
+            // Store light mode preference
+            localStorage.setItem('darkMode', 'false');
         });
     </script>
 </body>
-</html> 
+</html>
