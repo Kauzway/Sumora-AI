@@ -42,7 +42,8 @@
             background-color: var(--light-bg);
             color: var(--text-color);
             transition: background-color 0.3s ease, color 0.3s ease;
-            background-image: url('https://www.transparenttextures.com/patterns/cubes.png');
+            /* Improved background pattern */
+            background-image: url('https://www.transparenttextures.com/patterns/subtle-white-feathers.png');
             min-height: 100vh;
             position: relative;
             padding-bottom: 60px; /* Space for footer */
@@ -51,7 +52,128 @@
         body.dark-mode {
             background-color: var(--dark-bg);
             color: var(--dark-text);
-            background-image: url('https://www.transparenttextures.com/patterns/dark-geometric.png');
+            /* Improved dark background pattern */
+            background-image: url('https://www.transparenttextures.com/patterns/black-felt.png');
+        }
+        
+        /* Fix for dark mode text visibility */
+        body.dark-mode .text-muted,
+        body.dark-mode .card .text-muted {
+            color: rgba(229, 214, 201, 0.75) !important; /* Using dark-text with some opacity */
+        }
+        
+        /* Fix for file name visibility */
+        #file-name {
+            color: var(--accent-color);
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 4px;
+            background-color: rgba(225, 193, 165, 0.2);
+            display: inline-block;
+            margin-top: 10px;
+        }
+        
+        body.dark-mode #file-name {
+            color: var(--primary-light);
+            background-color: rgba(200, 166, 138, 0.2);
+        }
+        
+        /* Enhance logo visibility in light mode */
+        .logo-container {
+            background-color: rgba(45, 37, 32, 0.05) !important; /* Slight dark background */
+            padding: 4px 8px !important;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1) !important;
+            transition: all 0.3s ease;
+        }
+        
+        .logo-container:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
+        }
+        
+        body.dark-mode .logo-container {
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2) !important;
+            background-color: rgba(229, 214, 201, 0.05) !important; /* Slight light background in dark mode */
+        }
+        
+        /* Style for the upload description */
+        .upload-description {
+            color: var(--text-color);
+            font-weight: 400;
+        }
+        
+        body.dark-mode .upload-description {
+            color: var(--dark-text);
+        }
+        
+        /* Fix spacing and position for the summary panel and chat container */
+        .summary-panel {
+            position: relative;
+        }
+        
+        .chat-container {
+            position: relative;
+        }
+        
+        /* Scrollable summary panel with fixed height */
+        .summary-panel {
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            transition: background-color 0.3s ease;
+            border: 1px solid var(--glass-border);
+            height: 350px; /* Default height */
+            max-height: 350px; /* Max height to prevent stretching */
+            overflow-y: auto; /* Add scroll when needed */
+            margin-bottom: 1rem;
+            position: relative; /* For resize handle */
+            resize: vertical; /* Allow vertical resizing */
+            min-height: 200px; /* Minimum height */
+        }
+        
+        /* Make the chat container resizable */
+        .chat-container {
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 12px;
+            height: 150px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            transition: background-color 0.3s ease;
+            border: 1px solid var(--glass-border);
+            max-height: 250px; /* Increased max height */
+            resize: vertical; /* Allow vertical resizing */
+            min-height: 100px; /* Minimum height */
+        }
+        
+        /* Custom resize handle for better visibility */
+        .summary-panel::after,
+        .chat-container::after {
+            content: '';
+            position: absolute;
+            bottom: 3px;
+            right: 3px;
+            width: 10px;
+            height: 10px;
+            background-image: radial-gradient(circle, var(--primary-color) 1px, transparent 2px);
+            background-size: 4px 4px;
+            background-repeat: round;
+            cursor: ns-resize;
+            opacity: 0.5;
+            transition: opacity 0.2s ease;
+        }
+        
+        .summary-panel:hover::after,
+        .chat-container:hover::after {
+            opacity: 1;
         }
         
         body.dark-mode .card {
@@ -902,23 +1024,6 @@
             color: white;
         }
         
-        /* Logo container styling */
-        .logo-container {
-            background-color: transparent !important;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08) !important;
-            transition: all 0.3s ease;
-        }
-        
-        .logo-container:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
-        }
-        
-        body.dark-mode .logo-container {
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2) !important;
-        }
-        
         /* Regenerate button styling */
         #regenerate-summary {
             background-color: var(--primary-light);
@@ -966,7 +1071,7 @@
                             <div class="card-body p-5">
                                 <div class="text-center mb-4">
                                     <h3>Upload Your Presentation</h3>
-                                    <p class="text-muted">Upload your slides (PDF format) for AI-powered analysis and summaries</p>
+                                    <p class="upload-description">Upload your slides (PDF format) for AI-powered analysis and summaries</p>
                                 </div>
                                 
                                 <form id="upload-form" enctype="multipart/form-data">
@@ -978,7 +1083,7 @@
                                             </div>
                                         </label>
                                         <input type="file" class="form-control d-none" id="slide-file" name="file" accept=".pdf">
-                                        <div id="file-name" class="mt-2 text-muted"></div>
+                                        <div id="file-name" class="mt-2"></div>
                                     </div>
                                     
                                     <div class="text-center">
@@ -1360,6 +1465,29 @@
             
             // Initial update of mobile slide indicators
             updateMobileSlideIndicators();
+        });
+
+        // Add file name display enhancement
+        document.addEventListener('DOMContentLoaded', function() {
+            const fileInput = document.getElementById('slide-file');
+            const fileNameDisplay = document.getElementById('file-name');
+            
+            fileInput.addEventListener('change', function() {
+                if (this.files && this.files.length > 0) {
+                    const fileName = this.files[0].name;
+                    fileNameDisplay.innerHTML = `<i class="fas fa-file-pdf me-1"></i> ${fileName}`;
+                    fileNameDisplay.style.display = 'inline-block';
+                } else {
+                    fileNameDisplay.textContent = '';
+                    fileNameDisplay.style.display = 'none';
+                }
+            });
+            
+            // Theme toggle sync between desktop and mobile
+            const desktopThemeToggle = document.getElementById('theme-toggle');
+            const mobileThemeToggle = document.getElementById('mobile-theme-toggle');
+            
+            // ... existing code ...
         });
     </script>
 </body>
