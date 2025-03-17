@@ -28,6 +28,7 @@ import threading
 import datetime
 from collections import deque
 from dotenv import load_dotenv
+import httpx
 
 # Load environment variables right after imports, before any code execution
 load_dotenv()  # Take environment variables from .env file
@@ -426,6 +427,12 @@ def check_groq_availability():
     # Start by assuming API is available (optimistic approach)
     groq_available = True
     
+    # If no API key is configured, mark as unavailable immediately
+    if not groq_api_key:
+        print("❌ No Groq API key configured - skipping availability check")
+        groq_available = False
+        return False
+    
     # Skip the API check if we're already at the rate limit
     can_proceed, wait_time, reason = check_rate_limits(10)  # Minimal token estimate
     if not can_proceed:
@@ -435,6 +442,10 @@ def check_groq_availability():
         return False
     
     try:
+        # Set a timeout for the API call
+        # Set the default timeout for the httpx library that Groq client uses
+        httpx._config.DEFAULT_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+        
         # Simple health check with minimal API usage
         try:
             # Initialize a fresh Groq client to ensure we're not using a stale instance
@@ -442,12 +453,15 @@ def check_groq_availability():
             
             # Make a very small request to check availability
             # This counts against our rate limits, so use minimal tokens
+            # Add timeout directly to the create call as well for extra safety
+            print(f"Testing connection to Groq API with model: {groq_model}")
             completion = test_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=groq_model,
                 messages=[
                     {"role": "user", "content": "Hi"}
                 ],
-                max_tokens=1  # Just need to verify the API works
+                max_tokens=1,  # Just need to verify the API works
+                timeout=15.0   # Set explicit timeout for this request
             )
             
             # Verify we got a proper response
@@ -457,7 +471,7 @@ def check_groq_availability():
                 return False
             
             # If we get here, the API is available
-            print("✅ Groq API is available and responding")
+            print(f"✅ Groq API is available and responding with model: {groq_model}")
             groq_available = True
             
             # Record this minimal usage for rate limiting
@@ -467,6 +481,13 @@ def check_groq_availability():
                 record_token_usage(1, 1)  # Minimal estimate if usage not provided
                 
             return True
+            
+        except httpx.TimeoutException as timeout_error:
+            print(f"⚠️ Groq API request timed out: {str(timeout_error)}")
+            print("The API may be experiencing high load or connectivity issues")
+            # Consider API available but with warnings
+            groq_available = True  # Still try to use it for actual requests
+            return True  # Continue with app initialization
             
         except Exception as api_error:
             print(f"⚠️ Groq API check encountered an error: {str(api_error)}")
@@ -485,7 +506,7 @@ def check_groq_availability():
                 groq_available = True
                 return True
             elif "not found" in error_str or "model" in error_str:
-                print("❌ Model error - The requested model may not be available")
+                print(f"❌ Model error - The requested model '{groq_model}' may not be available")
                 groq_available = False
                 return False
                 
@@ -495,9 +516,9 @@ def check_groq_availability():
                 
     except Exception as e:
         print(f"⚠️ Error checking Groq API: {str(e)}")
-        # Mark API as unavailable if there's a serious error
-        groq_available = False
-        return False
+        # Mark API as available despite the error - let's be optimistic
+        groq_available = True
+        return True  # Continue with app initialization
 
 # Create the Flask app
 app = Flask(__name__)
