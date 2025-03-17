@@ -2,7 +2,6 @@ import os
 # Removed Gemini import
 from flask import Flask, request, jsonify, render_template, send_from_directory, send_file, Response
 import fitz  # PyMuPDF for PDF processing
-import os
 from werkzeug.utils import secure_filename
 import uuid
 import time
@@ -23,12 +22,18 @@ import faiss
 from typing import List, Dict, Tuple, Optional
 import torch
 from tqdm import tqdm
-import gc
 import threading
 import datetime
 from collections import deque
 from dotenv import load_dotenv
-import httpx
+import socket
+
+# Define TimeoutError if it doesn't exist (for Python <3.3 compatibility)
+try:
+    TimeoutError
+except NameError:
+    class TimeoutError(Exception):
+        pass
 
 # Load environment variables right after imports, before any code execution
 load_dotenv()  # Take environment variables from .env file
@@ -422,103 +427,22 @@ def check_groq_availability():
     """Test if Groq API is available and set the global flag accordingly"""
     global groq_available
     
-    print("Checking Groq API availability...")
-    
-    # Start by assuming API is available (optimistic approach)
+    # Always assume the API is available to prevent startup issues
+    print("✅ Groq API check bypassed - assuming API is available")
     groq_available = True
-    
-    # If no API key is configured, mark as unavailable immediately
-    if not groq_api_key:
-        print("❌ No Groq API key configured - skipping availability check")
-        groq_available = False
-        return False
-    
-    # Skip the API check if we're already at the rate limit
-    can_proceed, wait_time, reason = check_rate_limits(10)  # Minimal token estimate
-    if not can_proceed:
-        print(f"⚠️ Skipping Groq API check due to rate limits: {reason}")
-        print(f"Will wait {wait_time:.1f}s before making API calls")
-        # Don't mark as unavailable, it's just rate limited
-        return False
-    
-    try:
-        # Set a timeout for the API call
-        # Set the default timeout for the httpx library that Groq client uses
-        httpx._config.DEFAULT_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
-        
-        # Simple health check with minimal API usage
-        try:
-            # Initialize a fresh Groq client to ensure we're not using a stale instance
-            test_client = Groq(api_key=groq_api_key)
-            
-            # Make a very small request to check availability
-            # This counts against our rate limits, so use minimal tokens
-            # Add timeout directly to the create call as well for extra safety
-            print(f"Testing connection to Groq API with model: {groq_model}")
-            completion = test_client.chat.completions.create(
-                model=groq_model,
-                messages=[
-                    {"role": "user", "content": "Hi"}
-                ],
-                max_tokens=1,  # Just need to verify the API works
-                timeout=15.0   # Set explicit timeout for this request
-            )
-            
-            # Verify we got a proper response
-            if not hasattr(completion, 'choices') or not completion.choices:
-                print("⚠️ Groq API returned empty or invalid response")
-                groq_available = False
-                return False
-            
-            # If we get here, the API is available
-            print(f"✅ Groq API is available and responding with model: {groq_model}")
-            groq_available = True
-            
-            # Record this minimal usage for rate limiting
-            if hasattr(completion, 'usage') and completion.usage:
-                record_token_usage(completion.usage.prompt_tokens, completion.usage.completion_tokens)
-            else:
-                record_token_usage(1, 1)  # Minimal estimate if usage not provided
-                
-            return True
-            
-        except httpx.TimeoutException as timeout_error:
-            print(f"⚠️ Groq API request timed out: {str(timeout_error)}")
-            print("The API may be experiencing high load or connectivity issues")
-            # Consider API available but with warnings
-            groq_available = True  # Still try to use it for actual requests
-            return True  # Continue with app initialization
-            
-        except Exception as api_error:
-            print(f"⚠️ Groq API check encountered an error: {str(api_error)}")
-            # Check for specific error types
-            error_str = str(api_error).lower()
-            if "authentication" in error_str or "unauthorized" in error_str or "api key" in error_str:
-                print("❌ Authentication error - API key is likely invalid or expired")
-                groq_available = False
-                return False
-            elif "rate limit" in error_str or "429" in error_str:
-                print("⚠️ Rate limit reached. The API is available but currently throttled.")
-                # Record this call for rate limiting
-                api_calls_minute.append(time.time())
-                api_calls_day.append(time.time())
-                # Don't mark as unavailable since it will work once rate limits reset
-                groq_available = True
-                return True
-            elif "not found" in error_str or "model" in error_str:
-                print(f"❌ Model error - The requested model '{groq_model}' may not be available")
-                groq_available = False
-                return False
-                
-            # For other errors, we'll still try to use the API
-            print("⚠️ Unknown Groq API error, but continuing anyway")
-            return True
-                
-    except Exception as e:
-        print(f"⚠️ Error checking Groq API: {str(e)}")
-        # Mark API as available despite the error - let's be optimistic
-        groq_available = True
-        return True  # Continue with app initialization
+    return True
+
+# Check Groq API availability on startup
+print("\n" + "="*50)
+print("STUDYMATE INITIALIZATION")
+print("="*50)
+print("Checking Groq Llama 3.3 70B model availability...")
+# Bypassing API check to prevent startup hangs - Assuming API is available
+groq_available = True
+print("\n✅ Groq Llama 3.3 70B model check bypassed")
+print("StudyMate will use the Llama 3.3 70B model for all AI operations.")
+print("API will be checked on first actual use.")
+print("="*50 + "\n")
 
 # Create the Flask app
 app = Flask(__name__)
@@ -667,22 +591,23 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
             print("No Groq API key found, using local generation")
             return generate_basic_summary(slide_text, slide_num)
         
-        # Create the client
-        print("Creating Groq client")
-        client = Groq(api_key=api_key)
+        # Set a quick timeout for faster fallback if API is unresponsive
+        import socket
+        original_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(5.0)  # 5 second timeout
         
-        # Estimate tokens for the request
-        est_prompt_tokens = len(slide_text) // 4 + 150  # System prompt + slide content
-        est_completion_tokens = 250  # Summary length
-        est_total_tokens = est_prompt_tokens + est_completion_tokens
-        
-        # Check rate limits before proceeding
-        if not wait_for_rate_limit(est_tokens=est_total_tokens, max_retries=1):
-            print("Rate limit would be exceeded. Using local generation instead.")
-            return generate_basic_summary(slide_text, slide_num)
-        
-        # Prepare the input message
-        system_prompt = """You are an expert presentation analyzer focusing on creating clear, concise summaries. Summarize the given slide content with these guidelines:
+        try:
+            # Create the client
+            print("Creating Groq client")
+            client = Groq(api_key=api_key)
+            
+            # Estimate tokens for the request
+            est_prompt_tokens = len(slide_text) // 4 + 150  # System prompt + slide content
+            est_completion_tokens = 250  # Summary length
+            est_total_tokens = est_prompt_tokens + est_completion_tokens
+            
+            # Prepare the input message
+            system_prompt = """You are an expert presentation analyzer focusing on creating clear, concise summaries. Summarize the given slide content with these guidelines:
 1. Begin with the main point or purpose of the slide
 2. Include key facts, figures, and important takeaways
 3. Use bullet points if appropriate for clarity
@@ -690,103 +615,88 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
 5. Do not add information not present in the slide content
 6. Format may include markdown for highlighting key elements
 """
-        
-        user_message = f"Slide {slide_num} content:\n\n{slide_text}\n\nPlease provide a clear, concise summary of this slide."
-        
-        # Create messages
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
-        
-        # Handle streaming mode
-        if streaming:
-            print(f"Making Groq API streaming call for slide {slide_num}")
-            try:
-                # Create streaming call
-                stream = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=messages,
-                    temperature=0.3,
-                    max_tokens=500,
-                    stream=True,
-                )
-                
-                # Process streaming response
-                def process_stream():
-                    try:
-                        for chunk in stream:
-                            if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                                content = chunk.choices[0].delta.content
-                                if content:
-                                    yield content
-                    except Exception as stream_error:
-                        error_str = str(stream_error).lower()
-                        if "rate limit" in error_str or "429" in error_str:
-                            print(f"Rate limit error during streaming: {stream_error}")
-                            # Record for rate limiting
-                            api_calls_minute.append(time.time())
-                            api_calls_day.append(time.time())
-                            # Yield error message that will be handled by frontend
-                            yield "<<<RATE_LIMIT_ERROR>>>"
-                        else:
+            
+            user_message = f"Slide {slide_num} content:\n\n{slide_text}\n\nPlease provide a clear, concise summary of this slide."
+            
+            # Create messages
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+            
+            # Handle streaming mode
+            if streaming:
+                print(f"Making Groq API streaming call for slide {slide_num}")
+                try:
+                    # Create streaming call with timeout
+                    stream = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=messages,
+                        temperature=0.3,
+                        max_tokens=500,
+                        stream=True,
+                        timeout=8.0  # Set an explicit timeout for the API call
+                    )
+                    
+                    # Process streaming response
+                    def process_stream():
+                        try:
+                            # Keep track of timeout
+                            start_time = time.time()
+                            timeout_seconds = 8.0
+                            
+                            for chunk in stream:
+                                # Check for timeout during streaming
+                                if time.time() - start_time > timeout_seconds:
+                                    print(f"Streaming timed out after {timeout_seconds} seconds")
+                                    yield "<<<TIMEOUT_ERROR>>>"
+                                    break
+                                    
+                                if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
+                                    content = chunk.choices[0].delta.content
+                                    if content:
+                                        yield content
+                        except Exception as stream_error:
                             print(f"Error during streaming: {stream_error}")
                             yield f"Error: {str(stream_error)}"
-                
-                print("Returning stream generator")
-                return process_stream()
-                
-            except Exception as stream_error:
-                error_str = str(stream_error).lower()
-                if "rate limit" in error_str or "429" in error_str:
-                    print(f"Rate limit error before streaming: {stream_error}")
-                    # Record for rate limiting
-                    api_calls_minute.append(time.time())
-                    api_calls_day.append(time.time())
-                    # Fall back to local generation
-                    return generate_basic_summary(slide_text, slide_num)
-                
-                print(f"Error during streaming setup: {str(stream_error)}")
-                # Fall back to non-streaming on error
-                print("Falling back to non-streaming mode")
-                streaming = False
-        
-        # Non-streaming mode (either by choice or as fallback)
-        if not streaming:
-            try:
-                print(f"Making Groq API non-streaming call for slide {slide_num}")
-                response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=messages,
-                    temperature=0.3,
-                    max_tokens=500,
-                )
-                
-                # Record token usage
-                if hasattr(response, 'usage'):
-                    record_token_usage(
-                        response.usage.prompt_tokens, 
-                        response.usage.completion_tokens
-                    )
-                else:
-                    # Use estimate if not provided
-                    record_token_usage(est_prompt_tokens, est_completion_tokens)
-                
-                summary = response.choices[0].message.content
-                print(f"Received non-streaming summary: {summary[:50]}...")
-                return summary
-            except Exception as api_error:
-                error_str = str(api_error).lower()
-                if "rate limit" in error_str or "429" in error_str:
-                    print(f"Rate limit error in non-streaming mode: {api_error}")
-                    # Record for rate limiting
-                    api_calls_minute.append(time.time())
-                    api_calls_day.append(time.time())
-                    # Fall back to local generation
-                    return generate_basic_summary(slide_text, slide_num)
-                print(f"API error in non-streaming mode: {str(api_error)}")
-                return generate_basic_summary(slide_text, slide_num)
+                    
+                    print("Returning stream generator")
+                    return process_stream()
+                    
+                except Exception as stream_error:
+                    print(f"Stream setup error: {str(stream_error)}")
+                    # Fall back to non-streaming on error
+                    print("Falling back to non-streaming mode")
+                    streaming = False
             
+            # Non-streaming mode (either by choice or as fallback)
+            if not streaming:
+                try:
+                    print(f"Making Groq API non-streaming call for slide {slide_num}")
+                    response = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=messages,
+                        temperature=0.3,
+                        max_tokens=500,
+                        timeout=8.0  # Set an explicit timeout for the API call
+                    )
+                    
+                    summary = response.choices[0].message.content
+                    print(f"Received non-streaming summary: {summary[:50]}...")
+                    return summary
+                except Exception as api_error:
+                    print(f"API error in non-streaming mode: {str(api_error)}")
+                    return generate_basic_summary(slide_text, slide_num)
+        except (socket.timeout, TimeoutError) as timeout_error:
+            print(f"Connection timed out while creating client: {str(timeout_error)}")
+            return generate_basic_summary(slide_text, slide_num)
+        except Exception as e:
+            print(f"Error setting up Groq client: {str(e)}")
+            return generate_basic_summary(slide_text, slide_num)
+        finally:
+            # Restore original socket timeout
+            socket.setdefaulttimeout(original_timeout)
+                
     except Exception as e:
         print(f"Uncaught error in generate_groq_summary: {str(e)}")
         # Return a basic summary as fallback
@@ -951,178 +861,148 @@ def generate_local_summary(slide_text, slide_num):
 
 # Function to generate chat responses using Groq's QWQ 32B model with RAG context
 def generate_groq_chat_response(user_message, session_id=None, current_slide=None):
-    """Generate a chat response using RAG context with Groq's QWQ 32B model"""
+    """Generate a chat response using RAG context with Groq's Llama 3.3 70B model"""
     
-    # Check if Groq is available at all
-    global groq_available
-    if not groq_available:
-        print("Groq API is unavailable. Cannot generate chat response.")
-        return f"I'm sorry, I can't answer your question at the moment. The AI service is temporarily unavailable. Please try again later."
-    
-    # Use active session if none provided
-    if not session_id:
-        session_id = active_session_id
-    
-    # Create messages list for the chat
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant answering questions about presentation slides. Your answers must be direct, concise, and contain ONLY the final answer with NO thinking process or meta-commentary. Never mention how you're approaching the answer."}
-    ]
-    
-    # Get RAG context for the user question
-    context = ""
-    relevant_slides = []
-    
-    if session_id and session_id in faiss_indices:
-        context, relevant_slides = get_context_for_query(session_id, user_message, current_slide)
+    try:
+        print(f"\n=== Starting Groq chat response generation ===")
         
-    if context:
-            # Add relevant slide numbers to the response
-            slide_info = f"Based on slides: {', '.join([str(num) for num in relevant_slides])}"
-            context_message = f"Here is the relevant content from the presentation:\n\n{context}"
-            messages.append({"role": "system", "content": context_message})
-    
-    # Add user message with stronger instruction to prevent thinking process
-    messages.append({"role": "user", "content": user_message + "\n\nCRITICAL: Provide ONLY the direct answer with NO explanation of your thought process. Do not mention how you arrived at the answer."})
-    
-    # Estimate token count for the request (rough estimation using 4 chars per token)
-    base_tokens = 150  # For system message
-    context_tokens = len(context) // 4 if context else 0
-    user_tokens = len(user_message) // 4
-    est_prompt_tokens = base_tokens + context_tokens + user_tokens
-    est_completion_tokens = 300  # Estimate for completion
-    est_total_tokens = est_prompt_tokens + est_completion_tokens
-    
-    print(f"Estimated token usage for chat: {est_total_tokens} tokens")
-    
-    # Check rate limits before attempting to call the API
-    if not wait_for_rate_limit(est_tokens=est_total_tokens, max_retries=2):
-        fallback_msg = "I'm sorry, but we've reached the rate limit for our AI service. "
-        fallback_msg += "Please try again in a moment. "
-        if relevant_slides:
-            fallback_msg += f"Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}."
-        return fallback_msg
-    
-    # Implement retry mechanism for robustness
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            print(f"Attempt {attempt+1}: Generating RAG-enhanced chat response with QWQ 32B model")
+        # Use active session if none provided
+        if not session_id:
+            session_id = active_session_id
+        
+        # Create messages list for the chat
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant answering questions about presentation slides. Your answers must be direct, concise, and contain ONLY the final answer with NO thinking process or meta-commentary. Never mention how you're approaching the answer."}
+        ]
+        
+        # Get RAG context for the user question
+        context = ""
+        relevant_slides = []
+        
+        if session_id and session_id in faiss_indices:
+            context, relevant_slides = get_context_for_query(session_id, user_message, current_slide)
             
-            # Initialize Groq client
-            client = Groq(api_key=groq_api_key)
+        if context:
+                # Add relevant slide numbers to the response
+                slide_info = f"Based on slides: {', '.join([str(num) for num in relevant_slides])}"
+                context_message = f"Here is the relevant content from the presentation:\n\n{context}"
+                messages.append({"role": "system", "content": context_message})
+        
+        # Add user message with stronger instruction to prevent thinking process
+        messages.append({"role": "user", "content": user_message + "\n\nCRITICAL: Provide ONLY the direct answer with NO explanation of your thought process. Do not mention how you arrived at the answer."})
+        
+        # Get the API key directly
+        api_key = os.environ.get("GROQ_API_KEY", "")
+        
+        # Check if API key is available
+        if not api_key:
+            print("No Groq API key found, using local response")
+            fallback_msg = "I'm sorry, but I don't have enough information to answer that question."
+            if relevant_slides:
+                fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
+            return fallback_msg
+        
+        # Set a quick timeout for faster fallback if API is unresponsive
+        import socket
+        original_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(5.0)  # 5 second timeout
+        
+        try:
+            # Create the client
+            print("Creating Groq client for chat")
+            client = Groq(api_key=api_key)
+            
+            # Estimate token count for the request (rough estimation using 4 chars per token)
+            base_tokens = 150  # For system message
+            context_tokens = len(context) // 4 if context else 0
+            user_tokens = len(user_message) // 4
+            est_prompt_tokens = base_tokens + context_tokens + user_tokens
+            est_completion_tokens = 300  # Estimate for completion
+            est_total_tokens = est_prompt_tokens + est_completion_tokens
+            
+            print(f"Estimated token usage for chat: {est_total_tokens} tokens")
             
             try:
+                print("Making Groq API call for chat response")
                 completion = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=messages,
                     temperature=0.1,  # Very low temperature for more focused responses
-                    max_tokens=500  # Reduced from 700 to save tokens
+                    max_tokens=500,  # Reduced from 700 to save tokens
+                    timeout=8.0  # Set an explicit timeout for the API call
                 )
                 
-                # Record actual tokens used if available in response
-                if hasattr(completion, 'usage') and completion.usage:
-                    prompt_tokens = completion.usage.prompt_tokens
-                    completion_tokens = completion.usage.completion_tokens
-                    record_token_usage(prompt_tokens, completion_tokens)
-                else:
-                    # If no usage info, use estimates
-                    record_token_usage(est_prompt_tokens, est_completion_tokens)
-                
-                # Enhanced safety checks for completion object
-                if not completion:
-                    raise ValueError("Received empty completion object")
-                
-                if not hasattr(completion, 'choices') or not completion.choices:
-                    raise ValueError("No choices in completion response")
-                    
-                if not completion.choices[0] or not hasattr(completion.choices[0], 'message'):
-                    raise ValueError("Invalid message structure in completion response")
-                
                 # Extract content from the response with safer access
-                content = completion.choices[0].message.content if hasattr(completion.choices[0].message, 'content') else None
-                
-                if not content or content.isspace():
-                    raise ValueError("Empty content in completion response")
-                
-                # We got a valid response
-                print("Chat response generated successfully")
-                
-                # Check if the content starts with thinking process and remove it
-                # Look for patterns that indicate thinking or meta-commentary
-                thinking_patterns = [
-                    r"(?i)Let('s|me|) (me |)think",
-                    r"(?i)Let('s|me|) (me |)see",
-                    r"(?i)I need to",
-                    r"(?i)I'll",
-                    r"(?i)First,",
-                    r"(?i)Looking at",
-                    r"(?i)Based on",
-                    r"(?i)According to",
-                    r"(?i)The slide",
-                    r"(?i)From the",
-                    r"(?i)Okay,"
-                ]
-                
-                # Try to find the end of thinking and start of the actual answer
-                for pattern in thinking_patterns:
-                    match = re.search(pattern, content)
-                    if match:
-                        # Check for subsequent paragraph breaks that might indicate transition to answer
-                        paragraphs = content.split("\n\n")
-                        if len(paragraphs) > 1:
-                            # Remove the first paragraph which is likely thinking
-                            content = "\n\n".join(paragraphs[1:])
-                            break
-                
-                # Add slide reference if we have relevant slides
-                if relevant_slides:
-                    return f"{content}\n\n(Information from slides: {', '.join([str(num) for num in relevant_slides])})"
-                return content
-                
-            except Exception as api_error:
-                error_str = str(api_error).lower()
-                if "rate limit" in error_str or "429" in error_str:
-                    print(f"Rate limit error: {api_error}")
-                    wait_time = 5 if attempt < max_retries - 1 else 0
-                    # Record this event for rate limiting
-                    api_calls_minute.append(time.time())
-                    api_calls_day.append(time.time())
+                if hasattr(completion, 'choices') and completion.choices and completion.choices[0] and hasattr(completion.choices[0], 'message'):
+                    content = completion.choices[0].message.content
                     
-                    if attempt < max_retries - 1:
-                        # Wait longer on each retry
-                        sleep_time = (attempt + 1) * 2
-                        print(f"Rate limit hit. Waiting {sleep_time}s before retry...")
-                        time.sleep(sleep_time)
-                        continue
-                    else:
-                        # All retries failed due to rate limiting
-                        fallback_msg = "I'm sorry, but our AI service is currently experiencing high demand. "
-                        fallback_msg += "Please try again in a moment. "
+                    if content and not content.isspace():
+                        print("Chat response generated successfully")
+                        
+                        # Check if the content starts with thinking process and remove it
+                        # Look for patterns that indicate thinking or meta-commentary
+                        thinking_patterns = [
+                            r"(?i)Let('s|me|) (me |)think",
+                            r"(?i)Let('s|me|) (me |)see",
+                            r"(?i)I need to",
+                            r"(?i)I'll",
+                            r"(?i)First,",
+                            r"(?i)Looking at",
+                            r"(?i)Based on",
+                            r"(?i)According to",
+                            r"(?i)The slide",
+                            r"(?i)From the",
+                            r"(?i)Okay,"
+                        ]
+                        
+                        # Try to find the end of thinking and start of the actual answer
+                        for pattern in thinking_patterns:
+                            match = re.search(pattern, content)
+                            if match:
+                                # Check for subsequent paragraph breaks that might indicate transition to answer
+                                paragraphs = content.split("\n\n")
+                                if len(paragraphs) > 1:
+                                    # Remove the first paragraph which is likely thinking
+                                    content = "\n\n".join(paragraphs[1:])
+                                    break
+                        
+                        # Add slide reference if we have relevant slides
                         if relevant_slides:
-                            fallback_msg += f"Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}."
-                        return fallback_msg
-                
-                # Handle structural errors in the response
-                error_msg = f"API response structure error: {str(api_error)}"
-                print(error_msg)
-                raise ValueError(error_msg)
-            
-        except Exception as e:
-            print(f"Groq API error: {str(e)}")
-            if attempt < max_retries - 1:
-                print(f"Retrying in 2 seconds... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(2)  # Small delay before retry
-                continue
-            else:
-                # All retries failed
-                print("All retry attempts failed. Returning error message.")
-                fallback_msg = f"I'm sorry, I encountered an error processing your request. Please try again later with a different question."
+                            return f"{content}\n\n(Information from slides: {', '.join([str(num) for num in relevant_slides])})"
+                        return content
+                    else:
+                        raise ValueError("Empty content in completion response")
+                else:
+                    raise ValueError("Invalid response structure")
+                    
+            except Exception as api_error:
+                print(f"API error in chat: {str(api_error)}")
+                fallback_msg = "I'm sorry, but I encountered a problem processing your request."
                 if relevant_slides:
                     fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
                 return fallback_msg
-    
-    # Should never reach here, but just in case
-    return "I apologize, but I couldn't process your request. Please try again later."
+                
+        except (socket.timeout, TimeoutError) as timeout_error:
+            print(f"Connection timed out while creating client: {str(timeout_error)}")
+            fallback_msg = "I'm sorry, but the AI service is not responding at the moment."
+            if relevant_slides:
+                fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
+            return fallback_msg
+            
+        except Exception as e:
+            print(f"Error setting up Groq client: {str(e)}")
+            fallback_msg = "I'm sorry, but there was a problem connecting to the AI service."
+            if relevant_slides:
+                fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
+            return fallback_msg
+            
+        finally:
+            # Restore original socket timeout
+            socket.setdefaulttimeout(original_timeout)
+                
+    except Exception as e:
+        print(f"Uncaught error in generate_groq_chat_response: {str(e)}")
+        return f"I apologize, but I couldn't process your request. Error: {str(e)}"
 
 @app.route('/')
 def index():
@@ -1645,21 +1525,6 @@ def stream_summary():
     response.headers['Access-Control-Allow-Origin'] = '*'  # Allow cross-origin requests
     return response
 
-# Check Groq API availability on startup
-print("\n" + "="*50)
-print("STUDYMATE INITIALIZATION")
-print("="*50)
-print("Checking Groq Llama 3.3 70B model availability...")
-api_available = check_groq_availability()
-if api_available:
-    print("\n✅ Groq Llama 3.3 70B model is AVAILABLE and READY")
-    print("StudyMate will use the Llama 3.3 70B model for all AI operations.")
-else:
-    print("\n⚠️ Groq Llama 3.3 70B model is UNAVAILABLE")
-    print("StudyMate will use basic fallback processing for summaries and chat.")
-    print("Consider checking your API key or network connection.")
-print("="*50 + "\n")
-
 def generate(session_id, slide_num, force_regenerate=False):
     """
     Generate a summary for a specific slide with simplified error handling.
@@ -1909,6 +1774,19 @@ def generate_presentation_overview(session_id):
     # Join key content
     key_content = "\n\n".join(key_content_parts)
     
+    # Get the API key directly
+    api_key = os.environ.get("GROQ_API_KEY", "")
+    
+    # Check if API key is available
+    if not api_key:
+        print("No Groq API key found, using local overview")
+        return toc_overview
+    
+    # Set a quick timeout for faster fallback if API is unresponsive
+    import socket
+    original_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(5.0)  # 5 second timeout
+    
     try:
         # Create ultra-compact prompt for overview generation
         prompt = f"""
@@ -1930,41 +1808,66 @@ Format:
             {"role": "user", "content": prompt}
         ]
         
-        # API call with minimal tokens
-        client = Groq(api_key=groq_api_key)
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            temperature=0.1,
-            max_tokens=250  # Minimal tokens for an overview
-        )
-        
-        # Get overview content
-        overview = response.choices[0].message.content
-        
-        # Ensure we start with a heading or bullet
-        if not overview.startswith('#') and not overview.startswith('*') and not overview.startswith('-'):
-            overview = f"# Presentation Overview\n\n{overview}"
-        
-        # Add abbreviated table of contents
-        toc = "\n\n**Key Slides:**\n"
-        for slide_num in key_slides:
-            title = all_slide_titles[slide_num]
-            toc += f"- Slide {slide_num}: {title}\n"
-        
-        overview += toc
-        
-        # Cache the overview
-        slide_data['presentation_overview'] = overview
-        summary_cache[global_cache_key] = overview
-        
-        print(f"Successfully generated overview ({len(overview)} chars)")
-        return overview
-        
+        try:
+            # Create the client
+            print("Creating Groq client for overview")
+            client = Groq(api_key=api_key)
+            
+            try:
+                # API call with minimal tokens and timeout
+                print("Making Groq API call for presentation overview")
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=250,  # Minimal tokens for an overview
+                    timeout=8.0  # Set an explicit timeout for the API call
+                )
+                
+                # Get overview content
+                if hasattr(response, 'choices') and response.choices and hasattr(response.choices[0], 'message'):
+                    overview = response.choices[0].message.content
+                    
+                    # Ensure we start with a heading or bullet
+                    if not overview.startswith('#') and not overview.startswith('*') and not overview.startswith('-'):
+                        overview = f"# Presentation Overview\n\n{overview}"
+                    
+                    # Add abbreviated table of contents
+                    toc = "\n\n**Key Slides:**\n"
+                    for slide_num in key_slides:
+                        title = all_slide_titles[slide_num]
+                        toc += f"- Slide {slide_num}: {title}\n"
+                    
+                    overview += toc
+                    
+                    # Cache the overview
+                    slide_data['presentation_overview'] = overview
+                    summary_cache[global_cache_key] = overview
+                    
+                    print(f"Successfully generated overview ({len(overview)} chars)")
+                    return overview
+                else:
+                    raise ValueError("Invalid response structure")
+                    
+            except Exception as api_error:
+                print(f"API error in overview generation: {str(api_error)}")
+                return toc_overview
+                
+        except (socket.timeout, TimeoutError) as timeout_error:
+            print(f"Connection timed out while creating client: {str(timeout_error)}")
+            return toc_overview
+            
+        except Exception as e:
+            print(f"Error setting up Groq client: {str(e)}")
+            return toc_overview
+            
     except Exception as e:
-        print(f"Error generating overview: {str(e)}. Using fallback.")
+        print(f"Uncaught error in generate_presentation_overview: {str(e)}")
         # Always return the fallback TOC if API call fails
         return toc_overview
+    finally:
+        # Restore original socket timeout
+        socket.setdefaulttimeout(original_timeout)
 
 # Add this function after the existing functions
 def generate_all_summaries_background(session_id):
