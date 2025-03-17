@@ -33,9 +33,9 @@ from dotenv import load_dotenv
 load_dotenv()  # Take environment variables from .env file
 
 # Rate limiting configuration for Groq API
-RATE_LIMIT_RPM = 30  # Requests per minute
-RATE_LIMIT_RPD = 1000  # Requests per day
-RATE_LIMIT_TPM = 6000  # Tokens per minute
+RATE_LIMIT_RPM = 1000  # Requests per minute (for llama-3.3-70b-versatile)
+RATE_LIMIT_RPD = 500000  # Requests per day (for llama-3.3-70b-versatile)
+RATE_LIMIT_TPM = 250000  # Tokens per minute (for llama-3.3-70b-versatile)
 
 # Rate limiting tracking
 api_calls_minute = deque(maxlen=RATE_LIMIT_RPM)  # Track timestamps of calls in the last minute
