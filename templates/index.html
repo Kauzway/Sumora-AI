@@ -1296,6 +1296,19 @@
                 display: none;
             }
             
+            /* Mobile styling for Upload New button */
+            .header-actions {
+                gap: var(--space-2);
+            }
+            
+            #back-to-upload-btn {
+                font-size: 0.8rem;
+                padding: var(--space-1) var(--space-2);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            
             .panel-header {
                 flex-direction: column;
                 align-items: flex-start;
@@ -1431,6 +1444,17 @@
                 width: 40px;
                 height: 40px;
                 font-size: 1rem;
+            }
+            
+            /* Even smaller Upload New button for very small screens */
+            #back-to-upload-btn {
+                font-size: 0.75rem;
+                padding: var(--space-1) var(--space-2);
+                min-height: 32px;
+            }
+            
+            #back-to-upload-btn i {
+                margin-right: 2px;
             }
             
             .summary-panel {
