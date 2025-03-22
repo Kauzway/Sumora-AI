@@ -1,14 +1,24 @@
 FROM python:3.9-slim
 
-# Install system dependencies including SWIG
+# Install system dependencies including SWIG and Tesseract OCR
 RUN apt-get update && apt-get install -y \
     swig \
     build-essential \
     python3-dev \
     libopenblas-dev \
     git \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-osd \
+    tesseract-ocr-script-latn \
+    poppler-utils \
+    libtesseract-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Verify Tesseract installation
+RUN tesseract --version && \
+    tesseract --list-langs
 
 # Set working directory
 WORKDIR /app
@@ -27,6 +37,12 @@ COPY . .
 
 # Ensure entrypoint script is executable
 RUN chmod +x /app/entrypoint.sh
+
+# Create directories for uploads and cache
+RUN mkdir -p /app/slides /app/static/slide_images /app/static/Sumora_images /app/templates
+
+# Ensure Sumora_images are copied to the static directory
+COPY Sumora_images/* /app/static/Sumora_images/ 2>/dev/null || true
 
 # Expose the port the app runs on
 EXPOSE 8080

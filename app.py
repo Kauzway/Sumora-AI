@@ -10,6 +10,7 @@ import tempfile
 import base64
 from io import BytesIO
 from PIL import Image, ImageDraw
+import pytesseract  # For OCR on slide images
 import requests
 import json
 import re
@@ -27,6 +28,39 @@ import datetime
 from collections import deque
 from dotenv import load_dotenv
 import socket
+import platform
+from shutil import which
+
+# Configure Tesseract path for OCR
+# For Windows, you need to set the Tesseract executable path
+if platform.system() == 'Windows':
+    # Default path for Tesseract on Windows
+    tesseract_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    
+    # Try to find tesseract.exe in PATH
+    tesseract_in_path = which('tesseract')
+    if tesseract_in_path:
+        tesseract_path = tesseract_in_path
+        
+    pytesseract.pytesseract.tesseract_cmd = tesseract_path
+    print(f"Set Tesseract path to: {tesseract_path}")
+else:
+    # On Linux (Cloud Run) and MacOS, we assume Tesseract is in the PATH
+    # No need to set the path explicitly as pytesseract will use the system's default
+    print("Using system Tesseract installation from PATH")
+
+# Check if tesseract is available
+tesseract_available = False  # Default to False, will set to True if test passes
+try:
+    # Test if tesseract is working by doing a simple OCR on a small image
+    from PIL import Image
+    test_img = Image.new('RGB', (50, 10), color = (255, 255, 255))
+    pytesseract.image_to_string(test_img)
+    tesseract_available = True
+    print("✅ Tesseract OCR is working properly")
+except Exception as e:
+    print(f"⚠️ Tesseract OCR is not available: {str(e)}")
+    print("Text extraction from images will be limited. Please install Tesseract OCR for full functionality.")
 
 # Define TimeoutError if it doesn't exist (for Python <3.3 compatibility)
 try:
@@ -39,9 +73,9 @@ except NameError:
 load_dotenv()  # Take environment variables from .env file
 
 # Rate limiting configuration for Groq API
-RATE_LIMIT_RPM = 1000  # Requests per minute (for llama-3.3-70b-versatile)
-RATE_LIMIT_RPD = 500000  # Requests per day (for llama-3.3-70b-versatile)
-RATE_LIMIT_TPM = 250000  # Tokens per minute (for llama-3.3-70b-versatile)
+RATE_LIMIT_RPM = 1800  # Requests per minute (for llama-3.1-8b-instant)
+RATE_LIMIT_RPD = 900000  # Requests per day (for llama-3.1-8b-instant)
+RATE_LIMIT_TPM = 450000  # Tokens per minute (for llama-3.1-8b-instant)
 
 # Rate limiting tracking
 api_calls_minute = deque(maxlen=RATE_LIMIT_RPM)  # Track timestamps of calls in the last minute
@@ -160,8 +194,8 @@ if groq_api_key:
     client = Groq(api_key=groq_api_key)
     print("✅ Groq client initialized successfully")
 
-# Model configuration - use Llama 3.3 70B model
-groq_model = "llama-3.3-70b-versatile"  # The Groq model name
+# Model configuration - use Llama 3.1 8B model
+groq_model = "llama-3.1-8b-instant"  # The Groq model name
 
 # Variable to track if Groq API is available
 groq_available = True
@@ -379,13 +413,50 @@ def retrieve_relevant_chunks(session_id: str, query: str, top_k: int = 3) -> Lis
 
 def get_context_for_query(session_id: str, query: str, current_slide: Optional[int] = None) -> Tuple[str, List[int]]:
     """Get the most relevant context for a query, with a bias toward the current slide"""
+    # Check for slide references in the query
+    slide_query_match = re.search(r'(?:explain|show|tell me about|what is in|describe|summarize|content of)\s+slide\s+(\d+)(?:\s+|$|\?)', query.lower())
+    
+    # If query is about a specific slide but current_slide isn't set, update it
+    if slide_query_match and not current_slide:
+        try:
+            current_slide = int(slide_query_match.group(1))
+            print(f"Detected slide reference in query, setting current_slide to {current_slide}")
+        except ValueError:
+            pass
+            
     # Weight current slide more heavily if provided
     if current_slide is not None:
-        # Combine the query with the slide number to bias the search
-        biased_query = f"Slide {current_slide}: {query}"
-        chunks = retrieve_relevant_chunks(session_id, biased_query, top_k=3)  # Reduced from 5 to 3
+        # Check if slide exists
+        slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
+        extraction_data = slide_data.get('extraction_data', {})
+        slide_texts = extraction_data.get('slide_texts', {})
+        
+        if str(current_slide) in slide_texts:
+            # This is a valid slide - prioritize it
+            print(f"Prioritizing slide {current_slide} in context retrieval")
+            # Combine the query with the slide number to bias the search
+            biased_query = f"Slide {current_slide}: {query}"
+            chunks = retrieve_relevant_chunks(session_id, biased_query, top_k=5)
+            
+            # If chunks were found, ensure the current slide is included
+            current_slide_chunk = None
+            slides_found = set()
+            
+            for chunk, slide_num, score in chunks:
+                slides_found.add(slide_num)
+                
+            # If current slide isn't in the results, force include it
+            if current_slide not in slides_found:
+                # Get the content for the current slide
+                str_slide_content, exists = get_slide_content(session_id, current_slide)
+                if exists:
+                    # Create a special chunk entry for this slide
+                    chunks.insert(0, (str_slide_content, current_slide, 1.0))  # Add at the beginning with max score
+        else:
+            # Slide doesn't exist, use regular RAG
+            chunks = retrieve_relevant_chunks(session_id, query, top_k=5)
     else:
-        chunks = retrieve_relevant_chunks(session_id, query, top_k=3)  # Reduced from 5 to 3
+        chunks = retrieve_relevant_chunks(session_id, query, top_k=5)
         
     if not chunks:
         return "", []
@@ -436,11 +507,11 @@ def check_groq_availability():
 print("\n" + "="*50)
 print("STUDYMATE INITIALIZATION")
 print("="*50)
-print("Checking Groq Llama 3.3 70B model availability...")
+print("Checking Groq Llama 3.1 8B model availability...")
 # Bypassing API check to prevent startup hangs - Assuming API is available
 groq_available = True
-print("\n✅ Groq Llama 3.3 70B model check bypassed")
-print("StudyMate will use the Llama 3.3 70B model for all AI operations.")
+print("\n✅ Groq Llama 3.1 8B model check bypassed")
+print("StudyMate will use the Llama 3.1 8B model for all AI operations.")
 print("API will be checked on first actual use.")
 print("="*50 + "\n")
 
@@ -492,13 +563,7 @@ def extract_text_from_pdf(pdf_path, session_id):
             # Extract text from this page
             page_text = page.get_text()
             
-            # Add to the combined text
-            text_content += f"Slide {slide_num}:\n{page_text}\n\n"
-            
-            # Store in structured dictionary for RAG processing - use string keys consistently
-            structured_slides[str_slide_num] = page_text  # Use string keys for slide numbers
-            
-            # Render page to image for display
+            # Render page to image for display and OCR
             pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better quality
             img_data = pix.tobytes("png")
             
@@ -510,6 +575,46 @@ def extract_text_from_pdf(pdf_path, session_id):
             # Record image path
             slide_images.append(img_path)
             session_images[session_id].append(img_path)
+            
+            # Check if the page has minimal text content and might be mostly image-based
+            has_minimal_text = len(page_text.strip().split()) < 15
+            
+            if has_minimal_text and tesseract_available:
+                print(f"Slide {slide_num} has minimal text, attempting OCR...")
+                try:
+                    # Open the image with PIL for OCR
+                    with Image.open(img_path) as img:
+                        # Extract text using OCR
+                        ocr_text = pytesseract.image_to_string(img)
+                        
+                        if ocr_text and len(ocr_text.strip()) > 0:
+                            # Combine OCR text with any existing text
+                            combined_text = page_text.strip() + "\n\n[OCR-extracted text:]\n" + ocr_text
+                            
+                            # Add to the combined text
+                            text_content += f"Slide {slide_num}:\n{combined_text}\n\n"
+                            
+                            # Store in structured dictionary
+                            structured_slides[str_slide_num] = combined_text
+                            
+                            print(f"Successfully extracted OCR text from slide {slide_num}")
+                            continue  # Skip the regular text addition below
+                        else:
+                            print(f"OCR didn't extract any text from slide {slide_num}")
+                except Exception as ocr_err:
+                    print(f"Error during OCR processing for slide {slide_num}: {str(ocr_err)}")
+            elif has_minimal_text and not tesseract_available:
+                # If OCR isn't available but the slide has minimal text, add a note
+                print(f"Slide {slide_num} has minimal text, but OCR is not available (running on Cloud Run)")
+                # Add metadata to indicate this might be an image-heavy slide
+                page_text += "\n\n[This slide appears to be primarily visual with limited text. OCR is not available to extract text from images.]"
+            
+            # For slides where OCR wasn't performed or failed, use the regular text
+            # Add to the combined text
+            text_content += f"Slide {slide_num}:\n{page_text}\n\n"
+            
+            # Store in structured dictionary for RAG processing - use string keys consistently
+            structured_slides[str_slide_num] = page_text  # Use string keys for slide numbers
             
         document.close()
         
@@ -601,10 +706,8 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
             print("Creating Groq client")
             client = Groq(api_key=api_key)
             
-            # Estimate tokens for the request
-            est_prompt_tokens = len(slide_text) // 4 + 150  # System prompt + slide content
-            est_completion_tokens = 250  # Summary length
-            est_total_tokens = est_prompt_tokens + est_completion_tokens
+            # Check if this slide contains OCR-extracted text
+            has_ocr = "[OCR-extracted text:]" in slide_text
             
             # Prepare the input message
             system_prompt = """You are an expert presentation analyzer focusing on creating clear, concise summaries. Summarize the given slide content with these guidelines:
@@ -615,6 +718,18 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
 5. Do not add information not present in the slide content
 6. Format may include markdown for highlighting key elements
 """
+
+            # Add OCR-specific instructions if OCR text is present
+            if has_ocr:
+                system_prompt += """
+7. This slide contains OCR-extracted text from images. Focus on combining both regular text and OCR text to create a comprehensive summary.
+8. If the OCR text seems to contain errors, use your judgment to interpret what the correct text might be, but stay close to the content.
+"""
+            
+            # Estimate tokens for the request
+            est_prompt_tokens = len(slide_text) // 4 + 150  # System prompt + slide content
+            est_completion_tokens = 250  # Summary length
+            est_total_tokens = est_prompt_tokens + est_completion_tokens
             
             user_message = f"Slide {slide_num} content:\n\n{slide_text}\n\nPlease provide a clear, concise summary of this slide."
             
@@ -630,7 +745,7 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
                 try:
                     # Create streaming call with timeout
                     stream = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
+                        model="llama-3.1-8b-instant",
                         messages=messages,
                         temperature=0.3,
                         max_tokens=500,
@@ -674,7 +789,7 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
                 try:
                     print(f"Making Groq API non-streaming call for slide {slide_num}")
                     response = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
+                        model="llama-3.1-8b-instant",
                         messages=messages,
                         temperature=0.3,
                         max_tokens=500,
@@ -720,7 +835,14 @@ def generate_basic_summary(slide_text, slide_num):
     # Clean up the text
     text = slide_text.strip()
     
-    # Create a very simple summary
+    # Check if this mentions OCR unavailability
+    ocr_unavailable = "[This slide appears to be primarily visual with limited text. OCR is not available" in text
+    
+    # Special handling for slides that need OCR but it's not available
+    if ocr_unavailable:
+        return f"**Visual Content** - This slide appears to primarily contain visual elements (images, charts, or diagrams). Limited text was detected as OCR functionality is not available in this environment. The visual elements likely illustrate important concepts from the presentation."
+    
+    # Create a very simple summary for other slides
     if len(text) < 100:
         # For very short text, return it directly
         return f"Slide {slide_num} contains: {text}"
@@ -792,9 +914,28 @@ def generate_local_summary(slide_text, slide_num):
         
     words = slide_text.split()
     
+    # Check if this slide contains OCR-extracted text
+    has_ocr = "[OCR-extracted text:]" in slide_text
+    
     # Check for image metadata we added in extract_text_from_pdf
     has_image_metadata = "[This slide appears to be primarily visual" in slide_text or "[Contains a visual element of size" in slide_text
     has_embedded_images = "[Contains" in slide_text and "embedded image(s)" in slide_text
+    
+    # If we have OCR text, create a summary focused on that
+    if has_ocr:
+        # Extract the OCR text section
+        ocr_parts = slide_text.split("[OCR-extracted text:]")
+        if len(ocr_parts) > 1:
+            ocr_text = ocr_parts[1].strip()
+            original_text = ocr_parts[0].strip()
+            
+            # Prepare a combined summary
+            if len(original_text.split()) > 5:
+                # If there was meaningful original text too
+                return f"**Visual Slide with Text** - This slide contains both regular text and text extracted from images via OCR. Key content includes: **{' '.join(original_text.split()[:15])}... {' '.join(ocr_text.split()[:15])}...**"
+            else:
+                # If original text was minimal
+                return f"**Visual Slide with OCR** - Text extracted from image content: **{' '.join(ocr_text.split()[:30])}...**"
     
     # Check if slide has minimal text but likely contains images
     if len(words) <= 10 or has_image_metadata:
@@ -831,7 +972,7 @@ def generate_local_summary(slide_text, slide_num):
         else:
             # For slides with just minimal text
             return f"**Slide with Minimal Text** - This slide contains {len(words)} words and may focus on key points or contain visual elements. Text includes: **{' '.join(words)}**"
-    
+            
     # For slides with substantial text content
     if len(words) <= 30:
         # Short text slide - include all content
@@ -859,9 +1000,54 @@ def generate_local_summary(slide_text, slide_num):
             word_sample = ' '.join(words[:30])
             return f"**Content Slide** - This slide contains {len(words)} words. Beginning with: **{word_sample}...**"
 
+def get_slide_content(session_id, slide_num):
+    """
+    Get the content of a specific slide for direct reference
+    
+    Args:
+        session_id (str): The session ID
+        slide_num (int or str): The slide number
+        
+    Returns:
+        tuple: (slide_text, exists) where exists is a boolean indicating if the slide exists
+    """
+    try:
+        # Convert slide_num to string for consistent lookup
+        str_slide_num = str(slide_num)
+        
+        # Get slide data
+        slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
+        if not slide_data:
+            print(f"No data found for session {session_id}")
+            return "", False
+            
+        # Get slide texts
+        extraction_data = slide_data.get('extraction_data', {})
+        if not extraction_data:
+            print(f"No extraction data found for session {session_id}")
+            return "", False
+            
+        slide_texts = extraction_data.get('slide_texts', {})
+        if not slide_texts:
+            print(f"No slide texts found for session {session_id}")
+            return "", False
+            
+        # Check if the slide exists
+        if str_slide_num in slide_texts:
+            return slide_texts[str_slide_num], True
+        else:
+            # Get total slide count for error messaging
+            total_slides = len(slide_texts)
+            print(f"Slide {slide_num} not found. Available slides: 1-{total_slides}")
+            return "", False
+            
+    except Exception as e:
+        print(f"Error retrieving slide {slide_num}: {str(e)}")
+        return "", False
+
 # Function to generate chat responses using Groq's QWQ 32B model with RAG context
 def generate_groq_chat_response(user_message, session_id=None, current_slide=None):
-    """Generate a chat response using RAG context with Groq's Llama 3.3 70B model"""
+    """Generate a chat response using RAG context with Groq's Llama 3.1 8B model"""
     
     try:
         print(f"\n=== Starting Groq chat response generation ===")
@@ -872,8 +1058,42 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
         
         # Create messages list for the chat
         messages = [
-            {"role": "system", "content": "You are a helpful assistant answering questions about presentation slides. Your answers must be direct, concise, and contain ONLY the final answer with NO thinking process or meta-commentary. Never mention how you're approaching the answer."}
+            {"role": "system", "content": """You are a helpful assistant answering questions about presentation slides. Your answers must be direct, concise, and contain ONLY the final answer with NO thinking process or meta-commentary. Never mention how you're approaching the answer.
+
+When a user asks about a specific slide (e.g., "explain slide 9"), you should:
+1. Focus primarily on that slide's content
+2. If the slide doesn't exist in the presentation, clearly state this fact
+3. Only provide information from other slides when it directly helps answer the question
+
+For code-related questions:
+1. Explain the code's purpose and functionality clearly
+2. Highlight key components and their interactions
+3. Provide concrete examples of what the code does when possible"""}
         ]
+        
+        # Handle slide-specific queries
+        slide_query_match = re.search(r'(?:explain|show|tell me about|what is in|describe|summarize|content of)\s+slide\s+(\d+)(?:\s+|$|\?)', user_message.lower())
+        specific_slide = None
+        slide_content = ""
+        slide_exists = False
+        
+        if slide_query_match:
+            specific_slide = int(slide_query_match.group(1))
+            print(f"Detected request for specific slide: {specific_slide}")
+            
+            # Get the specific slide content
+            slide_content, slide_exists = get_slide_content(session_id, specific_slide)
+            
+            if slide_exists:
+                # Prioritize the specific slide
+                context_message = f"The user is asking about Slide {specific_slide}. Here is the content of that slide:\n\n{slide_content}"
+                messages.append({"role": "system", "content": context_message})
+                
+                # Set current_slide to ensure we bias RAG towards this slide
+                current_slide = specific_slide
+            else:
+                # Slide doesn't exist, but we'll still try RAG for related content
+                messages.append({"role": "system", "content": f"The user asked about Slide {specific_slide}, but this slide doesn't appear to exist in the current presentation."})
         
         # Get RAG context for the user question
         context = ""
@@ -882,11 +1102,10 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
         if session_id and session_id in faiss_indices:
             context, relevant_slides = get_context_for_query(session_id, user_message, current_slide)
             
-        if context:
-                # Add relevant slide numbers to the response
-                slide_info = f"Based on slides: {', '.join([str(num) for num in relevant_slides])}"
-                context_message = f"Here is the relevant content from the presentation:\n\n{context}"
-                messages.append({"role": "system", "content": context_message})
+        if context and not (specific_slide and slide_exists):
+            # Only add RAG context if we didn't already add the specific slide content
+            context_message = f"Here is the relevant content from the presentation:\n\n{context}"
+            messages.append({"role": "system", "content": context_message})
         
         # Add user message with stronger instruction to prevent thinking process
         messages.append({"role": "user", "content": user_message + "\n\nCRITICAL: Provide ONLY the direct answer with NO explanation of your thought process. Do not mention how you arrived at the answer."})
@@ -897,6 +1116,8 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
         # Check if API key is available
         if not api_key:
             print("No Groq API key found, using local response")
+            if specific_slide and not slide_exists:
+                return format_missing_slide_message(session_id, specific_slide, None, is_error=True)
             fallback_msg = "I'm sorry, but I don't have enough information to answer that question."
             if relevant_slides:
                 fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
@@ -925,7 +1146,7 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
             try:
                 print("Making Groq API call for chat response")
                 completion = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     messages=messages,
                     temperature=0.1,  # Very low temperature for more focused responses
                     max_tokens=500,  # Reduced from 700 to save tokens
@@ -966,8 +1187,15 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
                                     content = "\n\n".join(paragraphs[1:])
                                     break
                         
+                        # Handle non-existent slide specifically
+                        if specific_slide and not slide_exists:
+                            message = format_missing_slide_message(session_id, specific_slide, relevant_slides, is_error=False)
+                            return message + "\n\n" + content
+                        
                         # Add slide reference if we have relevant slides
-                        if relevant_slides:
+                        if specific_slide and slide_exists:
+                            return f"{content}\n\n(Information from slide {specific_slide})"
+                        elif relevant_slides:
                             return f"{content}\n\n(Information from slides: {', '.join([str(num) for num in relevant_slides])})"
                         return content
                     else:
@@ -977,6 +1205,15 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
                     
             except Exception as api_error:
                 print(f"API error in chat: {str(api_error)}")
+                if specific_slide and not slide_exists:
+                    slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
+                    extraction_data = slide_data.get('extraction_data', {})
+                    slide_texts = extraction_data.get('slide_texts', {})
+                    available_slides = sorted([int(k) for k in slide_texts.keys()])
+                    
+                    if available_slides:
+                        return format_missing_slide_message(session_id, specific_slide, relevant_slides, is_error=True)
+                
                 fallback_msg = "I'm sorry, but I encountered a problem processing your request."
                 if relevant_slides:
                     fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
@@ -1006,7 +1243,51 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
 
 @app.route('/')
 def index():
-    """Render the main page"""
+    """Render the landing page"""
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 'Landing.html')
+    if os.path.exists(template_path):
+        print(f"Landing page template found at: {template_path}")
+    else:
+        print(f"WARNING: Landing page template NOT found at expected path: {template_path}")
+        # List templates directory contents for debugging
+        templates_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
+        if os.path.exists(templates_dir):
+            print(f"Templates directory contents: {os.listdir(templates_dir)}")
+        else:
+            print(f"Templates directory not found at: {templates_dir}")
+    
+    return render_template('Landing.html')
+
+@app.route('/health')
+def health():
+    """Health check endpoint for Google Cloud Run"""
+    # Detailed platform information
+    platform_info = {
+        "system": platform.system(),
+        "release": platform.release(),
+        "version": platform.version()
+    }
+    
+    # Check Tesseract path
+    tesseract_path = "System PATH"
+    if platform.system() == 'Windows':
+        tesseract_path = pytesseract.pytesseract.tesseract_cmd
+    
+    return jsonify({
+        "status": "healthy",
+        "timestamp": str(datetime.datetime.now()),
+        "service": "Sumora AI",
+        "platform": platform_info,
+        "tesseract": {
+            "available": tesseract_available,
+            "path": tesseract_path
+        },
+        "groq_available": groq_available
+    })
+
+@app.route('/app')
+def app_index():
+    """Render the main application page"""
     return render_template('index.html')
 
 @app.route('/upload', methods=['POST'])
@@ -1098,10 +1379,31 @@ def chat():
         except ValueError:
             current_slide = None
     
+    # Extract slide number from query if present
+    slide_query_match = re.search(r'(?:explain|show|tell me about|what is in|describe|summarize|content of)\s+slide\s+(\d+)(?:\s+|$|\?)', user_message.lower())
+    if slide_query_match and not current_slide:
+        try:
+            extracted_slide = int(slide_query_match.group(1))
+            current_slide = extracted_slide
+            print(f"Extracted slide number from query: {current_slide}")
+        except ValueError:
+            pass
+    
     if not session_id or session_id not in slide_contents:
         return jsonify({'error': 'No slides have been uploaded or session expired'}), 400
     
     try:
+        # Check if the requested slide exists (when specified)
+        if current_slide is not None:
+            slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
+            extraction_data = slide_data.get('extraction_data', {})
+            slide_texts = extraction_data.get('slide_texts', {})
+            
+            if str(current_slide) not in slide_texts:
+                # If slide doesn't exist, log it but continue with the query
+                # The RAG system will handle this case
+                print(f"Requested slide {current_slide} not found. Available slides: {sorted([int(k) for k in slide_texts.keys()])}")
+        
         # Use RAG-enhanced chat response
         response_text = generate_groq_chat_response(
             user_message, 
@@ -1279,7 +1581,28 @@ def get_summaries():
 
 @app.route('/static/<path:path>')
 def serve_static(path):
-    return send_from_directory('static', path)
+    """Serve static files with improved error handling and logging"""
+    try:
+        print(f"Requested static file: {path}")
+        full_path = os.path.join('static', path)
+        
+        # Check if file exists
+        if not os.path.exists(full_path):
+            print(f"WARNING: Static file not found: {full_path}")
+            # For images, try to provide a fallback
+            if path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                print("Attempting to serve a fallback image")
+                return send_from_directory('static', 'images/placeholder.png')
+            return "File not found", 404
+            
+        # Additional logging for Sumora_images
+        if 'Sumora_images' in path:
+            print(f"Serving Sumora image: {path}, File size: {os.path.getsize(full_path)} bytes")
+        
+        return send_from_directory('static', path)
+    except Exception as e:
+        print(f"Error serving static file {path}: {str(e)}")
+        return f"Error: {str(e)}", 500
 
 @app.route('/slide_image/<path:path>')
 def serve_slide_image(path):
@@ -1817,7 +2140,7 @@ Format:
                 # API call with minimal tokens and timeout
                 print("Making Groq API call for presentation overview")
                 response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     messages=messages,
                     temperature=0.1,
                     max_tokens=250,  # Minimal tokens for an overview
@@ -1943,6 +2266,82 @@ def generate_all_summaries_background(session_id):
             slide_data['slide_summaries'][slide_num_str] = basic_summary
             
     print(f"Completed background generation of summaries for session {session_id}")
+
+def get_available_slides(session_id):
+    """
+    Get all available slide numbers for a session
+    
+    Args:
+        session_id (str): The session ID
+        
+    Returns:
+        list: List of available slide numbers sorted in ascending order
+    """
+    try:
+        # Get slide data
+        slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
+        if not slide_data:
+            return []
+            
+        # Get slide texts
+        extraction_data = slide_data.get('extraction_data', {})
+        if not extraction_data:
+            return []
+            
+        slide_texts = extraction_data.get('slide_texts', {})
+        if not slide_texts:
+            return []
+            
+        # Convert keys to integers and sort
+        return sorted([int(k) for k in slide_texts.keys()])
+        
+    except Exception as e:
+        print(f"Error getting available slides: {str(e)}")
+        return []
+
+def format_missing_slide_message(session_id, slide_num, relevant_slides=None, is_error=False):
+    """
+    Format a consistent message for when a slide doesn't exist.
+    
+    Args:
+        session_id (str): The session ID
+        slide_num (int): The requested slide number
+        relevant_slides (list, optional): List of relevant slide numbers found by RAG
+        is_error (bool, optional): Whether this is an error message (True) or informational (False)
+        
+    Returns:
+        str: Formatted message about the missing slide
+    """
+    available_slides = get_available_slides(session_id)
+    
+    if not available_slides:
+        return f"Slide {slide_num} was not found. It appears there are no slides in this presentation."
+    
+    if is_error:
+        prefix = f"I cannot find Slide {slide_num} in this presentation."
+    else:
+        prefix = f"Note: Slide {slide_num} does not exist in this presentation."
+    
+    # Basic information about available slides
+    message = f"{prefix} The presentation contains {len(available_slides)} slides (numbered {min(available_slides)}-{max(available_slides)})."
+    
+    # Find closest slides to the requested one
+    closest_slides = []
+    for available_num in available_slides:
+        if abs(available_num - slide_num) <= 2:  # Within 2 slides
+            closest_slides.append(available_num)
+    
+    if closest_slides:
+        message += f" Nearby slides are: {', '.join([str(num) for num in sorted(closest_slides)])}."
+    
+    # Add information about relevant slides if available
+    if relevant_slides:
+        if is_error:
+            message += f" Your question may relate to content found in slides: {', '.join([str(num) for num in relevant_slides])}."
+        else:
+            message += f" Information was retrieved from slides: {', '.join([str(num) for num in relevant_slides])}."
+    
+    return message
 
 # Run the app
 if __name__ == '__main__':

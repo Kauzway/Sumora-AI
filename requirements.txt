@@ -15,4 +15,5 @@ python-dotenv
 pydantic
 scikit-learn
 gunicorn>=20.1.0
-httpx>=0.24.0 
+httpx>=0.24.0
+pytesseract>=0.3.8 
