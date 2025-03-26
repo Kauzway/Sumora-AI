@@ -62,25 +62,64 @@ else:
         print("Running in Google Cloud Run environment")
         # Ensure the PATH includes standard binary locations
         os.environ['PATH'] = "/usr/bin:" + os.environ.get('PATH', '')
-        # Set TESSDATA_PREFIX if not already set
-        if 'TESSDATA_PREFIX' not in os.environ:
-            # Check common locations
-            for tessdata_path in [
-                "/usr/share/tesseract-ocr/4.00/tessdata",
-                "/usr/share/tesseract-ocr/5.00/tessdata",
-                "/usr/share/tessdata"
-            ]:
-                if os.path.exists(tessdata_path):
-                    os.environ['TESSDATA_PREFIX'] = tessdata_path
-                    print(f"Set TESSDATA_PREFIX to {tessdata_path}")
-                    break
+        
+        # Try to determine Tesseract version
+        try:
+            import subprocess
+            tesseract_version_output = subprocess.check_output(['tesseract', '--version'], text=True)
+            version_match = re.search(r'tesseract (\d+)\.(\d+)\.(\d+)', tesseract_version_output)
+            if version_match:
+                major_version = int(version_match.group(1))
+                print(f"Detected Tesseract major version: {major_version}")
+                
+                # Set TESSDATA_PREFIX based on major version
+                if major_version >= 5:
+                    # Try different possible paths for Tesseract 5.x
+                    for tessdata_path in [
+                        "/usr/share/tesseract-ocr/5.0/tessdata",
+                        "/usr/share/tesseract-ocr/5/tessdata",
+                        "/usr/share/tesseract/tessdata",
+                        "/usr/share/tessdata",
+                    ]:
+                        if os.path.exists(tessdata_path):
+                            os.environ['TESSDATA_PREFIX'] = tessdata_path
+                            print(f"Set TESSDATA_PREFIX to {tessdata_path}")
+                            break
+                else:
+                    # Try older Tesseract paths
+                    for tessdata_path in [
+                        "/usr/share/tesseract-ocr/4.00/tessdata",
+                        "/usr/share/tesseract-ocr/4.0/tessdata",
+                        "/usr/share/tesseract-ocr/4/tessdata",
+                    ]:
+                        if os.path.exists(tessdata_path):
+                            os.environ['TESSDATA_PREFIX'] = tessdata_path
+                            print(f"Set TESSDATA_PREFIX to {tessdata_path}")
+                            break
+        except Exception as e:
+            print(f"Error determining Tesseract version: {str(e)}")
+        
+        # If TESSDATA_PREFIX still isn't set or doesn't exist, search for eng.traineddata
+        if 'TESSDATA_PREFIX' not in os.environ or not os.path.exists(os.environ['TESSDATA_PREFIX']):
+            print("Searching for eng.traineddata file...")
+            try:
+                import subprocess
+                find_output = subprocess.check_output(['find', '/usr', '-name', 'eng.traineddata'], text=True)
+                paths = find_output.strip().split('\n')
+                if paths and paths[0]:
+                    tessdata_dir = os.path.dirname(paths[0])
+                    os.environ['TESSDATA_PREFIX'] = tessdata_dir
+                    print(f"Found eng.traineddata, set TESSDATA_PREFIX to {tessdata_dir}")
+            except Exception as e:
+                print(f"Error searching for eng.traineddata: {str(e)}")
 
 # Check if tesseract is available
-tesseract_available = False  # Default to False, will set to True if test passes
+tesseract_available = False
 try:
     # Test if tesseract is working by doing a simple OCR on a small image
     from PIL import Image
     test_img = Image.new('RGB', (50, 10), color = (255, 255, 255))
+    
     # First get version info
     try:
         tesseract_version = pytesseract.get_tesseract_version()
@@ -95,6 +134,29 @@ try:
 except Exception as e:
     print(f"⚠️ Tesseract OCR is not available: {str(e)}")
     print("Text extraction from images will be limited. Please install Tesseract OCR for full functionality.")
+    
+    # Try one more time after installing the English language data if on Linux
+    if platform.system() != 'Windows':
+        try:
+            import subprocess
+            print("Attempting to install tesseract-ocr-eng package...")
+            subprocess.run(['apt-get', 'update'], check=True)
+            subprocess.run(['apt-get', 'install', '-y', 'tesseract-ocr-eng'], check=True)
+            
+            # Try to find and set the correct TESSDATA_PREFIX
+            find_output = subprocess.check_output(['find', '/usr', '-name', 'eng.traineddata'], text=True)
+            paths = find_output.strip().split('\n')
+            if paths and paths[0]:
+                tessdata_dir = os.path.dirname(paths[0])
+                os.environ['TESSDATA_PREFIX'] = tessdata_dir
+                print(f"Found eng.traineddata, set TESSDATA_PREFIX to {tessdata_dir}")
+                
+                # Try OCR again
+                ocr_result = pytesseract.image_to_string(test_img)
+                tesseract_available = True
+                print("✅ Tesseract OCR is now working after installing language data")
+        except Exception as retry_e:
+            print(f"Final attempt to enable Tesseract failed: {str(retry_e)}")
 
 # Define TimeoutError if it doesn't exist (for Python <3.3 compatibility)
 try:

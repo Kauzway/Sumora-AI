@@ -17,16 +17,24 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Create tessdata directories and ensure eng.traineddata is available
+RUN mkdir -p /usr/share/tesseract-ocr/5.0/tessdata \
+    && mkdir -p /usr/share/tesseract-ocr/5/tessdata \
+    && mkdir -p /usr/share/tessdata \
+    && find /usr -name eng.traineddata | xargs -I{} ln -sf {} /usr/share/tesseract-ocr/5.0/tessdata/eng.traineddata \
+    && find /usr -name eng.traineddata | xargs -I{} ln -sf {} /usr/share/tesseract-ocr/5/tessdata/eng.traineddata \
+    && find /usr -name eng.traineddata | xargs -I{} ln -sf {} /usr/share/tessdata/eng.traineddata
+
 # Verify Tesseract installation and make sure it's in the PATH
 RUN tesseract --version && \
     tesseract --list-langs && \
     which tesseract && \
     echo "export PATH=$PATH:/usr/bin" >> /etc/profile && \
-    echo "export TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata" >> /etc/profile
+    echo "export TESSDATA_PREFIX=/usr/share/tesseract-ocr/5.0/tessdata" >> /etc/profile
 
 # Set environment variables for Tesseract
 ENV PATH="/usr/bin:${PATH}"
-ENV TESSDATA_PREFIX="/usr/share/tesseract-ocr/4.00/tessdata"
+ENV TESSDATA_PREFIX="/usr/share/tesseract-ocr/5.0/tessdata"
 ENV PRODUCTION="true"
 
 # Set working directory
