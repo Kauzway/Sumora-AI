@@ -13,12 +13,20 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr-script-latn \
     poppler-utils \
     libtesseract-dev \
+    libleptonica-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Verify Tesseract installation
+# Verify Tesseract installation and make sure it's in the PATH
 RUN tesseract --version && \
-    tesseract --list-langs
+    tesseract --list-langs && \
+    which tesseract && \
+    echo "export PATH=$PATH:/usr/bin" >> /etc/profile && \
+    echo "export TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata" >> /etc/profile
+
+# Set environment variables for Tesseract
+ENV PATH="/usr/bin:${PATH}"
+ENV TESSDATA_PREFIX="/usr/share/tesseract-ocr/4.00/tessdata"
 
 # Set working directory
 WORKDIR /app
@@ -30,6 +38,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 # Explicitly install gunicorn and verify it's installed
 RUN pip install --no-cache-dir gunicorn && \
+    pip install --no-cache-dir pytesseract && \
     gunicorn --version
 
 # Copy the rest of the application
@@ -41,8 +50,8 @@ RUN chmod +x /app/entrypoint.sh
 # Create directories for uploads and cache
 RUN mkdir -p /app/slides /app/static/slide_images /app/static/Sumora_images /app/templates
 
-# Ensure Sumora_images are copied to the static directory
-COPY Sumora_images/* /app/static/Sumora_images/ 2>/dev/null || true
+# Test if tesseract is properly installed and accessible
+RUN python -c "import pytesseract; print('Tesseract version:', pytesseract.get_tesseract_version())"
 
 # Expose the port the app runs on
 EXPOSE 8080
