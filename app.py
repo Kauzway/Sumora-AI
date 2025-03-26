@@ -612,13 +612,32 @@ client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
 
 # Determine appropriate redirect URI based on environment
 is_production = os.environ.get('PRODUCTION', 'False').lower() == 'true'
-base_url = 'https://sumora.kauzway.com' if is_production else 'http://localhost:5002'
-redirect_uri = f"{base_url}/auth/google/callback"
+is_cloud_run = 'K_SERVICE' in os.environ  # Check if running on Cloud Run
+is_gae = 'GAE_SKIP_GCS_INIT' in os.environ  # Check if running on App Engine
 
-print(f"OAuth Configuration:")
-print(f"Environment: {'Production' if is_production else 'Development'}")
+print("\n=== OAuth Configuration ===")
+print(f"Environment Variables:")
+print(f"PRODUCTION: {os.environ.get('PRODUCTION', 'Not Set')}")
+print(f"K_SERVICE: {os.environ.get('K_SERVICE', 'Not Set')}")
+print(f"GAE_SKIP_GCS_INIT: {os.environ.get('GAE_SKIP_GCS_INIT', 'Not Set')}")
+print(f"\nEnvironment Detection:")
+print(f"is_production: {is_production}")
+print(f"is_cloud_run: {is_cloud_run}")
+print(f"is_gae: {is_gae}")
+
+# Set base URL based on environment
+if is_cloud_run or is_gae:
+    base_url = 'https://sumora.kauzway.com'
+    print(f"\nRunning on Cloud Platform, using production URL: {base_url}")
+else:
+    base_url = 'http://localhost:5002'
+    print(f"\nRunning locally, using development URL: {base_url}")
+
+redirect_uri = f"{base_url}/auth/google/callback"
+print(f"\nFinal Configuration:")
 print(f"Base URL: {base_url}")
 print(f"Redirect URI: {redirect_uri}")
+print("========================\n")
 
 # Setup OAuth
 oauth = OAuth(app)
