@@ -611,13 +611,14 @@ client_id = os.environ.get('GOOGLE_CLIENT_ID')
 client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
 
 # Determine appropriate redirect URI based on environment
-# For local development, use localhost
-# For production, use the configured domain
 is_production = os.environ.get('PRODUCTION', 'False').lower() == 'true'
-base_url = 'https://sumora.kauzway.com' if is_production else os.environ.get('BASE_URL', 'http://localhost:5002')
-redirect_uri = os.environ.get('GOOGLE_REDIRECT_URI', f"{base_url}/auth/google/callback")
+base_url = 'https://sumora.kauzway.com' if is_production else 'http://localhost:5002'
+redirect_uri = f"{base_url}/auth/google/callback"
 
-print(f"OAuth Redirect URI: {redirect_uri}")
+print(f"OAuth Configuration:")
+print(f"Environment: {'Production' if is_production else 'Development'}")
+print(f"Base URL: {base_url}")
+print(f"Redirect URI: {redirect_uri}")
 
 # Setup OAuth
 oauth = OAuth(app)
