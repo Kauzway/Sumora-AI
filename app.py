@@ -1,6 +1,6 @@
 import os
 # Removed Gemini import
-from flask import Flask, request, jsonify, render_template, send_from_directory, send_file, Response
+from flask import Flask, request, jsonify, render_template, send_from_directory, send_file, Response, redirect, url_for, session
 import fitz  # PyMuPDF for PDF processing
 from werkzeug.utils import secure_filename
 import uuid
@@ -30,6 +30,9 @@ from dotenv import load_dotenv
 import socket
 import platform
 from shutil import which
+# OAuth imports
+from authlib.integrations.flask_client import OAuth
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 # Configure Tesseract path for OCR
 # For Windows, you need to set the Tesseract executable path
@@ -46,8 +49,31 @@ if platform.system() == 'Windows':
     print(f"Set Tesseract path to: {tesseract_path}")
 else:
     # On Linux (Cloud Run) and MacOS, we assume Tesseract is in the PATH
-    # No need to set the path explicitly as pytesseract will use the system's default
-    print("Using system Tesseract installation from PATH")
+    # Need to set the path explicitly to make sure pytesseract finds it
+    tesseract_in_path = which('tesseract')
+    if tesseract_in_path:
+        print(f"Found Tesseract at: {tesseract_in_path}")
+        pytesseract.pytesseract.tesseract_cmd = tesseract_in_path
+    else:
+        print("Tesseract not found in PATH")
+    
+    # Check for Google Cloud Run environment
+    if os.environ.get('K_SERVICE') or os.environ.get('K_REVISION'):
+        print("Running in Google Cloud Run environment")
+        # Ensure the PATH includes standard binary locations
+        os.environ['PATH'] = "/usr/bin:" + os.environ.get('PATH', '')
+        # Set TESSDATA_PREFIX if not already set
+        if 'TESSDATA_PREFIX' not in os.environ:
+            # Check common locations
+            for tessdata_path in [
+                "/usr/share/tesseract-ocr/4.00/tessdata",
+                "/usr/share/tesseract-ocr/5.00/tessdata",
+                "/usr/share/tessdata"
+            ]:
+                if os.path.exists(tessdata_path):
+                    os.environ['TESSDATA_PREFIX'] = tessdata_path
+                    print(f"Set TESSDATA_PREFIX to {tessdata_path}")
+                    break
 
 # Check if tesseract is available
 tesseract_available = False  # Default to False, will set to True if test passes
@@ -55,7 +81,15 @@ try:
     # Test if tesseract is working by doing a simple OCR on a small image
     from PIL import Image
     test_img = Image.new('RGB', (50, 10), color = (255, 255, 255))
-    pytesseract.image_to_string(test_img)
+    # First get version info
+    try:
+        tesseract_version = pytesseract.get_tesseract_version()
+        print(f"Detected Tesseract version: {tesseract_version}")
+    except Exception as ve:
+        print(f"Could not get Tesseract version: {str(ve)}")
+    
+    # Now try actual OCR
+    ocr_result = pytesseract.image_to_string(test_img)
     tesseract_available = True
     print("✅ Tesseract OCR is working properly")
 except Exception as e:
@@ -521,6 +555,8 @@ app.config['UPLOAD_FOLDER'] = 'slides'
 app.config['IMAGE_FOLDER'] = 'static/slide_images'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB limit
 app.config['SLIDE_DATA'] = {}  # Initialize empty slide data dictionary
+# Add secret key for sessions
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', os.urandom(24))
 
 # Ensure upload and image folders exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -538,6 +574,54 @@ if not os.path.exists(placeholder_path):
         img.save(placeholder_path)
     except Exception as e:
         print(f"Error creating placeholder image: {str(e)}")
+
+# Load environment variables for OAuth
+client_id = os.environ.get('GOOGLE_CLIENT_ID')
+client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
+
+# Determine appropriate redirect URI based on environment
+# For local development, use localhost
+# For production, use the configured domain
+is_production = os.environ.get('PRODUCTION', 'False').lower() == 'true'
+base_url = 'https://sumora.kauzway.com' if is_production else os.environ.get('BASE_URL', 'http://localhost:5002')
+redirect_uri = os.environ.get('GOOGLE_REDIRECT_URI', f"{base_url}/auth/google/callback")
+
+print(f"OAuth Redirect URI: {redirect_uri}")
+
+# Setup OAuth
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=client_id,
+    client_secret=client_secret,
+    access_token_url='https://accounts.google.com/o/oauth2/token',
+    access_token_params=None,
+    authorize_url='https://accounts.google.com/o/oauth2/auth',
+    authorize_params=None,
+    api_base_url='https://www.googleapis.com/oauth2/v1/',
+    client_kwargs={'scope': 'openid email profile'},
+)
+
+# Setup Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+# User model for Flask-Login
+class User(UserMixin):
+    def __init__(self, id, email, name):
+        self.id = id
+        self.email = email
+        self.name = name
+
+# Flask-Login user loader
+@login_manager.user_loader
+def load_user(user_id):
+    # Simple user storage - in production, you'd use a database
+    if 'user_data' in session and session['user_data'].get('id') == user_id:
+        data = session['user_data']
+        return User(data['id'], data['email'], data['name'])
+    return None
 
 # Global variables
 active_session_id = None
@@ -1243,20 +1327,11 @@ For code-related questions:
 
 @app.route('/')
 def index():
-    """Render the landing page"""
-    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 'Landing.html')
-    if os.path.exists(template_path):
-        print(f"Landing page template found at: {template_path}")
+    """Redirect to the appropriate page based on login status"""
+    if current_user.is_authenticated:
+        return redirect(url_for('app_index'))
     else:
-        print(f"WARNING: Landing page template NOT found at expected path: {template_path}")
-        # List templates directory contents for debugging
-        templates_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
-        if os.path.exists(templates_dir):
-            print(f"Templates directory contents: {os.listdir(templates_dir)}")
-        else:
-            print(f"Templates directory not found at: {templates_dir}")
-    
-    return render_template('Landing.html')
+        return render_template('Landing.html')
 
 @app.route('/health')
 def health():
@@ -1286,6 +1361,7 @@ def health():
     })
 
 @app.route('/app')
+@login_required
 def app_index():
     """Render the main application page"""
     return render_template('index.html')
@@ -2343,11 +2419,88 @@ def format_missing_slide_message(session_id, slide_num, relevant_slides=None, is
     
     return message
 
+# Add login page route
+@app.route('/login')
+def login():
+    """Show login page"""
+    error = request.args.get('error')
+    return render_template('login.html', error=error)
+
+# Add Google login route
+@app.route('/google_login')
+def google_login():
+    """Redirect to Google for authentication"""
+    return google.authorize_redirect(redirect_uri)
+
+# Add Google callback route
+@app.route('/auth/google/callback')
+def google_callback():
+    """Handle Google OAuth callback"""
+    try:
+        token = google.authorize_access_token()
+        resp = google.get('userinfo')
+        user_info = resp.json()
+        
+        # Create user object
+        user = User(
+            id=user_info['id'],
+            email=user_info['email'],
+            name=user_info.get('name', user_info['email'])
+        )
+        
+        # Store user data in session
+        session['user_data'] = {
+            'id': user.id,
+            'email': user.email,
+            'name': user.name
+        }
+        
+        # Login user with Flask-Login
+        login_user(user)
+        
+        # Redirect to app page
+        return redirect(url_for('app_index'))
+    except Exception as e:
+        # Log the error
+        app.logger.error(f"OAuth error: {str(e)}")
+        
+        # Clear any existing session data that might be causing issues
+        session.clear()
+        
+        # Redirect back to login page
+        return redirect(url_for('login', error="Authentication failed. Please try again."))
+
+# Add logout route
+@app.route('/logout')
+def logout():
+    """Log the user out and redirect to login page"""
+    logout_user()
+    session.clear()
+    return redirect(url_for('login'))
+
+# Add terms of service route
+@app.route('/tos')
+def terms_of_service():
+    """Display the Terms of Service page"""
+    return render_template('tos.html')
+
+# Add privacy policy route
+@app.route('/privacy-policy')
+def privacy_policy():
+    """Display the Privacy Policy page"""
+    return render_template('privacy-policy.html')
+
+# Add route for misspelled privacy policy URL (for Google OAuth)
+@app.route('/privicy-policy')
+def privicy_policy():
+    """Redirect misspelled privacy policy URL to correct one"""
+    return redirect(url_for('privacy_policy'))
+    
 # Run the app
 if __name__ == '__main__':
     # For Cloud Run, use a simpler startup approach focused on reliability
     try:
-        port = int(os.environ.get('PORT', 8080))
+        port = int(os.environ.get('PORT', 5002))
         print(f"Starting application on port {port}")
         print(f"Running in {'Production' if 'K_SERVICE' in os.environ else 'Development'} mode")
         

@@ -472,7 +472,42 @@
         .header-actions {
             display: flex;
             align-items: center;
-            gap: var(--space-3);
+            gap: var(--space-4);
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        
+        .username {
+            font-weight: 500;
+            color: var(--light-on-surface);
+        }
+        
+        body.dark-mode .username {
+            color: var(--dark-on-surface);
+        }
+        
+        .logout-btn {
+            color: var(--brand-primary-dark);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color var(--transition-fast);
+        }
+        
+        .logout-btn:hover {
+            color: var(--brand-primary-darker);
+            text-decoration: underline;
+        }
+        
+        body.dark-mode .logout-btn {
+            color: var(--brand-primary-light);
+        }
+        
+        body.dark-mode .logout-btn:hover {
+            color: var(--brand-primary-lighter);
         }
         
         .header-range {
@@ -1547,26 +1582,20 @@
             <header class="app-header">
                 <div class="container">
                     <div class="header-content">
-                        <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="header-logo">
-                        
-                        <div class="header-range">
-                            <label for="slide-range-start">Show slides</label>
-                            <input type="number" id="slide-range-start" class="form-control form-control-sm" min="1" value="1">
-                            <span>to</span>
-                            <input type="number" id="slide-range-end" class="form-control form-control-sm" min="1" value="10">
-                            <button id="apply-range-btn" class="btn btn-primary btn-sm">Apply</button>
+                        <div class="logo-container">
+                            <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="logo">
                         </div>
-                        
                         <div class="header-actions">
-                            <button id="back-to-upload-btn" class="btn btn-outline">
-                                <i class="fas fa-arrow-left me-1"></i>Upload New
-                            </button>
-                            
-                            <div id="theme-toggle" class="theme-switch">
-                                <div class="switch-handle">
-                                    <i class="fas fa-sun"></i>
-                                </div>
+                            <div class="user-info">
+                                {% if current_user.is_authenticated %}
+                                <span class="username">{{ current_user.name }}</span>
+                                <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
+                                {% endif %}
                             </div>
+                            <button id="theme-toggle" aria-label="Toggle dark mode">
+                                <i class="fas fa-moon"></i>
+                                <i class="fas fa-sun"></i>
+                            </button>
                         </div>
                     </div>
                 </div>

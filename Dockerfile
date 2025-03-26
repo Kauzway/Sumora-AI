@@ -27,6 +27,7 @@ RUN tesseract --version && \
 # Set environment variables for Tesseract
 ENV PATH="/usr/bin:${PATH}"
 ENV TESSDATA_PREFIX="/usr/share/tesseract-ocr/4.00/tessdata"
+ENV PRODUCTION="true"
 
 # Set working directory
 WORKDIR /app
