@@ -1,0 +1,2057 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sumora</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Add Bootstrap for grid layout -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Add Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            /* Brand colors */
+            --brand-primary: #e1c1a5;
+            --brand-primary-light: #f0d4be;
+            --brand-primary-lighter: #f7e9de;
+            --brand-primary-dark: #c8a68a;
+            --brand-primary-darker: #a3866d;
+            
+            /* UI colors - Light Mode */
+            --light-bg: #f8f9fc;
+            --light-surface: #ffffff;
+            --light-surface-variant: #f0f2f5;
+            --light-on-surface: #1a1c1e;
+            --light-on-surface-variant: #41484d;
+            --light-outline: #72787e;
+            
+            /* UI colors - Dark Mode */
+            --dark-bg: #121212;
+            --dark-surface: #1e1e1e;
+            --dark-surface-variant: #2c2c2c;
+            --dark-on-surface: #e4e4e4;
+            --dark-on-surface-variant: #c4c7c5;
+            --dark-outline: #8b9198;
+            
+            /* Accent colors */
+            --accent-success: #4caf50;
+            --accent-info: #2196f3;
+            --accent-warning: #ff9800;
+            --accent-error: #f44336;
+            
+            /* Shadows */
+            --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.04);
+            --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.12);
+            
+            /* Transitions */
+            --transition-fast: 150ms;
+            --transition-medium: 300ms;
+            --transition-slow: 500ms;
+            
+            /* Border radius */
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 16px;
+            --radius-xl: 24px;
+            --radius-pill: 9999px;
+            
+            /* Spacing scale */
+            --space-1: 4px;
+            --space-2: 8px;
+            --space-3: 12px;
+            --space-4: 16px;
+            --space-5: 24px;
+            --space-6: 32px;
+            --space-7: 48px;
+            --space-8: 64px;
+            
+            /* Updated Glass effect */
+            --glass-light: rgba(255, 255, 255, 0.7);
+            --glass-light-strong: rgba(255, 255, 255, 0.85);
+            --glass-dark: rgba(30, 30, 30, 0.7);
+            --glass-dark-strong: rgba(20, 20, 20, 0.85);
+            --glass-blur: 16px;
+            
+            /* Animation */
+            --animation-scale-down: scale(0.98);
+            --animation-scale-up: scale(1.02);
+            
+            /* Z-index layers */
+            --z-dropdown: 1000;
+            --z-sticky: 1020;
+            --z-fixed: 1030;
+            --z-modal-backdrop: 1040;
+            --z-modal: 1050;
+            --z-tooltip: 1080;
+        }
+        
+        /* User Profile Styles */
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            margin-right: var(--space-3);
+        }
+        
+        .user-greeting {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--light-on-surface-variant);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 150px;
+        }
+        
+        body.dark-mode .user-greeting {
+            color: var(--dark-on-surface-variant);
+        }
+        
+        .logout-btn {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.8rem;
+            white-space: nowrap;
+            background-color: transparent;
+            border: 1px solid var(--brand-primary);
+            color: var(--brand-primary-dark);
+            transition: all var(--transition-fast);
+        }
+        
+        .logout-btn:hover {
+            background-color: rgba(225, 193, 165, 0.1);
+        }
+        
+        body.dark-mode .logout-btn {
+            border-color: var(--brand-primary-dark);
+            color: var(--brand-primary-light);
+        }
+        
+        body.dark-mode .logout-btn:hover {
+            background-color: rgba(225, 193, 165, 0.2);
+        }
+        
+        /* Global Styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            font-size: 16px;
+            line-height: 1.5;
+            color: var(--light-on-surface);
+            position: relative;
+            min-height: 100vh;
+            transition: background-color var(--transition-medium), color var(--transition-medium);
+            
+            /* Modern Light Mode Background */
+            background-color: var(--light-bg);
+            background-image: 
+                radial-gradient(circle at 100% 0%, rgba(225, 193, 165, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 0% 100%, rgba(240, 212, 190, 0.12) 0%, transparent 50%),
+                linear-gradient(120deg, rgba(250, 250, 255, 1) 0%, rgba(240, 240, 245, 1) 100%);
+            background-attachment: fixed;
+            background-size: cover;
+        }
+        
+        body.dark-mode {
+            color: var(--dark-on-surface);
+            
+            /* Modern Dark Mode Background */
+            background-color: var(--dark-bg);
+            background-image: 
+                radial-gradient(circle at 100% 0%, rgba(80, 60, 50, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 0% 100%, rgba(60, 50, 80, 0.12) 0%, transparent 50%),
+                linear-gradient(120deg, rgba(20, 20, 28, 1) 0%, rgba(15, 15, 20, 1) 100%);
+            background-attachment: fixed;
+            background-size: cover;
+        }
+        
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-weight: 600;
+            letter-spacing: -0.03em;
+            color: var(--light-on-surface);
+        }
+        
+        body.dark-mode h1,
+        body.dark-mode h2,
+        body.dark-mode h3,
+        body.dark-mode h4,
+        body.dark-mode h5,
+        body.dark-mode h6 {
+            color: var(--dark-on-surface);
+        }
+        
+        a {
+            color: var(--brand-primary-dark);
+            text-decoration: none;
+            transition: color var(--transition-fast);
+        }
+        
+        a:hover {
+            color: var(--brand-primary-darker);
+            text-decoration: none;
+        }
+        
+        img {
+            max-width: 100%;
+        }
+        
+        /* Button Styles */
+        .btn {
+            font-weight: 500;
+            letter-spacing: 0.02em;
+            border-radius: var(--radius-md);
+            padding: var(--space-2) var(--space-4);
+            transition: all var(--transition-fast);
+            border: none;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::after {
+            content: "";
+            display: block;
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            background-color: transparent;
+            pointer-events: none;
+            transition: background-color var(--transition-fast);
+        }
+        
+        .btn:active {
+            transform: var(--animation-scale-down);
+        }
+        
+        .btn:hover::after {
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+        
+        .btn-primary {
+            background-color: var(--brand-primary);
+            color: var(--light-on-surface);
+        }
+        
+        .btn-primary:hover {
+            color: var(--light-on-surface);
+        }
+        
+        .btn-outline {
+            background-color: transparent;
+            color: var(--brand-primary-dark);
+            border: 1px solid var(--brand-primary);
+        }
+        
+        .btn-outline:hover {
+            background-color: rgba(225, 193, 165, 0.1);
+        }
+        
+        .btn-secondary {
+            background-color: var(--light-surface-variant);
+            color: var(--light-on-surface);
+        }
+        
+        body.dark-mode .btn-secondary {
+            background-color: var(--dark-surface-variant);
+            color: var(--dark-on-surface);
+        }
+        
+        .btn-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-pill);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+        }
+        
+        .btn-sm {
+            padding: var(--space-1) var(--space-3);
+            font-size: 0.875rem;
+        }
+        
+        .btn-lg {
+            padding: var(--space-3) var(--space-5);
+            font-size: 1.125rem;
+        }
+        
+        .btn-float {
+            position: absolute;
+            bottom: var(--space-4);
+            right: var(--space-4);
+            width: 56px;
+            height: 56px;
+            border-radius: var(--radius-pill);
+            box-shadow: var(--shadow-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        
+        /* Card Styles */
+        .card {
+            background: var(--glass-light-strong);
+            border-radius: var(--radius-xl);
+            border: none;
+            overflow: hidden;
+            box-shadow: var(--shadow-md);
+            transition: all var(--transition-medium);
+            margin-bottom: var(--space-4);
+        }
+        
+        body.dark-mode .card {
+            background: var(--glass-dark-strong);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+        }
+        
+        .card-header {
+            background: transparent;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            padding: var(--space-4) var(--space-5);
+        }
+        
+        body.dark-mode .card-header {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .card-body {
+            padding: var(--space-5);
+        }
+        
+        /* Form Controls */
+        .form-control {
+            border-radius: var(--radius-md);
+            border: 1px solid var(--light-outline);
+            padding: var(--space-2) var(--space-3);
+            transition: all var(--transition-fast);
+            background-color: var(--light-surface);
+            color: var(--light-on-surface);
+        }
+        
+        .form-control:focus {
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 3px rgba(225, 193, 165, 0.25);
+        }
+        
+        body.dark-mode .form-control {
+            background-color: var(--dark-surface-variant);
+            border-color: var(--dark-outline);
+            color: var(--dark-on-surface);
+        }
+        
+        body.dark-mode .form-control:focus {
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 3px rgba(225, 193, 165, 0.25);
+        }
+        
+        .form-label {
+            font-weight: 500;
+            margin-bottom: var(--space-2);
+            color: var(--light-on-surface-variant);
+        }
+        
+        body.dark-mode .form-label {
+            color: var(--dark-on-surface-variant);
+        }
+        
+        /* Upload Section */
+        #upload-section {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-5) 0;
+            position: relative;
+        }
+        
+        .upload-container {
+            max-width: 600px;
+            width: 100%;
+            padding: 0 var(--space-4);
+            margin: 0 auto;
+        }
+        
+        .upload-card {
+            background: var(--glass-light-strong);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            padding: var(--space-6);
+            border-radius: var(--radius-xl);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        
+        body.dark-mode .upload-card {
+            background: var(--glass-dark-strong);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+        
+        .upload-logo {
+            margin-bottom: var(--space-5);
+            max-width: 180px;
+        }
+        
+        .upload-title {
+            font-size: 2rem;
+            margin-bottom: var(--space-3);
+            font-weight: 700;
+        }
+        
+        .upload-description {
+            color: var(--light-on-surface-variant);
+            margin-bottom: var(--space-5);
+            font-size: 1.1rem;
+        }
+        
+        body.dark-mode .upload-description {
+            color: var(--dark-on-surface-variant);
+        }
+        
+        .upload-area {
+            border: 2px dashed var(--brand-primary);
+            border-radius: var(--radius-lg);
+            padding: var(--space-6);
+            margin-bottom: var(--space-5);
+            position: relative;
+            transition: all var(--transition-medium);
+            background-color: rgba(225, 193, 165, 0.05);
+            cursor: pointer;
+        }
+        
+        .upload-area:hover {
+            background-color: rgba(225, 193, 165, 0.1);
+        }
+        
+        .upload-area input[type="file"] {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+        
+        .upload-icon {
+            font-size: 3rem;
+            color: var(--brand-primary);
+            margin-bottom: var(--space-3);
+        }
+        
+        .upload-text {
+            color: var(--light-on-surface-variant);
+            font-size: 1rem;
+        }
+        
+        body.dark-mode .upload-text {
+            color: var(--dark-on-surface-variant);
+        }
+        
+        #file-name {
+            padding: var(--space-3);
+            background-color: rgba(225, 193, 165, 0.1);
+            border-radius: var(--radius-md);
+            margin: var(--space-3) 0 var(--space-5) 0;
+            display: none;
+            font-weight: 500;
+            color: var(--brand-primary-darker);
+        }
+        
+        body.dark-mode #file-name {
+            background-color: rgba(225, 193, 165, 0.15);
+            color: var(--brand-primary-light);
+        }
+        
+        /* Results Section */
+        #results-section {
+            min-height: 100vh;
+            padding: 0 0 var(--space-6) 0;
+            display: none;
+        }
+        
+        .app-header {
+            position: sticky;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: var(--glass-light);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+            z-index: var(--z-sticky);
+            padding: var(--space-3) var(--space-5);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: var(--space-5);
+        }
+        
+        body.dark-mode .app-header {
+            background: var(--glass-dark);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .header-logo {
+            height: 40px;
+        }
+        
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+        }
+        
+        .header-range {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        
+        .header-range input {
+            width: 60px;
+            text-align: center;
+        }
+        
+        /* Switch/Toggle */
+        .theme-switch {
+            position: relative;
+            width: 60px;
+            height: 30px;
+            border-radius: var(--radius-pill);
+            background: var(--light-surface-variant);
+            cursor: pointer;
+            transition: background var(--transition-fast);
+            user-select: none;
+        }
+        
+        .theme-switch.active {
+            background: var(--brand-primary-dark);
+        }
+        
+        .switch-handle {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 24px;
+            height: 24px;
+            border-radius: var(--radius-pill);
+            background: var(--light-surface);
+            transition: transform var(--transition-medium);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .theme-switch.active .switch-handle {
+            transform: translateX(30px);
+            background: var(--dark-surface);
+        }
+        
+        /* Slide Viewer */
+        .slide-container {
+            height: calc(100vh - 200px);
+            min-height: 400px;
+            position: relative;
+        }
+        
+        .slide-viewer {
+            height: calc(100% - 80px);
+            background: var(--glass-light-strong);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            box-shadow: var(--shadow-md);
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        body.dark-mode .slide-viewer {
+            background: var(--glass-dark-strong);
+        }
+        
+        .slide-content {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .slide-image {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        
+        .slide-loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            background: rgba(255, 255, 255, 0.8);
+            z-index: 5;
+        }
+        
+        body.dark-mode .slide-loading {
+            background: rgba(0, 0, 0, 0.7);
+        }
+        
+        .slide-controls {
+            position: absolute;
+            bottom: var(--space-4);
+            left: 0;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-3);
+            z-index: 10;
+        }
+        
+        .slide-control-btn {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-pill);
+            background: var(--glass-light-strong);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--light-on-surface);
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            box-shadow: var(--shadow-md);
+        }
+        
+        .slide-control-btn:hover {
+            background: var(--brand-primary-light);
+        }
+        
+        body.dark-mode .slide-control-btn {
+            background: var(--glass-dark-strong);
+            color: var(--dark-on-surface);
+        }
+        
+        body.dark-mode .slide-control-btn:hover {
+            background: var(--brand-primary-dark);
+        }
+        
+        /* Thumbnails */
+        .thumbnails-container {
+            margin-top: var(--space-4);
+            overflow-x: auto;
+            white-space: nowrap;
+            scrollbar-width: thin;
+            scrollbar-color: var(--brand-primary) var(--light-surface-variant);
+            padding: var(--space-2);
+            background: var(--glass-light-strong);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+        }
+        
+        body.dark-mode .thumbnails-container {
+            background: var(--glass-dark-strong);
+            scrollbar-color: var(--brand-primary) var(--dark-surface-variant);
+        }
+        
+        .thumbnails-container::-webkit-scrollbar {
+            height: 6px;
+        }
+        
+        .thumbnails-container::-webkit-scrollbar-thumb {
+            background-color: var(--brand-primary);
+            border-radius: var(--radius-pill);
+        }
+        
+        .thumbnails-container::-webkit-scrollbar-track {
+            background-color: var(--light-surface-variant);
+            border-radius: var(--radius-pill);
+        }
+        
+        body.dark-mode .thumbnails-container::-webkit-scrollbar-track {
+            background-color: var(--dark-surface-variant);
+        }
+        
+        .thumbnail {
+            display: inline-block;
+            width: 120px;
+            height: 68px;
+            margin-right: var(--space-3);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            position: relative;
+        }
+        
+        .thumbnail:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        .thumbnail.active {
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 2px rgba(225, 193, 165, 0.3);
+        }
+        
+        .thumbnail-img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .thumbnail-number {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 0 var(--space-2);
+            font-size: 0.7rem;
+            border-top-left-radius: var(--radius-md);
+        }
+        
+        /* AI Panel */
+        .ai-panel {
+            position: relative;
+            height: calc(100vh - 200px);
+            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: var(--space-3);
+        }
+        
+        .slide-info {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            padding: var(--space-2) var(--space-4);
+            background: var(--light-surface-variant);
+            border-radius: var(--radius-pill);
+        }
+        
+        body.dark-mode .slide-info {
+            background: var(--dark-surface-variant);
+        }
+        
+        .slide-badge {
+            background: var(--brand-primary);
+            color: var(--light-on-surface);
+            border-radius: var(--radius-pill);
+            padding: var(--space-1) var(--space-3);
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+        
+        .total-badge {
+            background: var(--brand-primary-dark);
+            color: white;
+            border-radius: var(--radius-pill);
+            padding: var(--space-1) var(--space-3);
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+        
+        .goto-container {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        
+        .goto-input {
+            width: 60px;
+            border-top-right-radius: 0;
+            border-bottom-right-radius: 0;
+            text-align: center;
+        }
+        
+        .goto-btn {
+            border-top-left-radius: 0;
+            border-bottom-left-radius: 0;
+        }
+        
+        /* Summary Panel */
+        .summary-container {
+            position: relative;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            transition: all var(--transition-medium);
+        }
+        
+        .summary-panel {
+            background: var(--glass-light-strong);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            padding: var(--space-4);
+            flex: 1;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--brand-primary) var(--light-surface-variant);
+            transition: all var(--transition-medium);
+            margin-bottom: var(--space-4);
+            position: relative;
+            max-height: calc(100% - 180px); /* Ensure scrolling */
+            min-height: 250px;
+        }
+        
+        body.dark-mode .summary-panel {
+            background: var(--glass-dark-strong);
+            scrollbar-color: var(--brand-primary) var(--dark-surface-variant);
+        }
+        
+        .summary-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .summary-panel::-webkit-scrollbar-thumb {
+            background-color: var(--brand-primary);
+            border-radius: var(--radius-pill);
+        }
+        
+        .summary-panel::-webkit-scrollbar-track {
+            background-color: var(--light-surface-variant);
+            border-radius: var(--radius-pill);
+        }
+        
+        body.dark-mode .summary-panel::-webkit-scrollbar-track {
+            background-color: var(--dark-surface-variant);
+        }
+        
+        .summary-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: var(--space-4);
+            padding-bottom: var(--space-3);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        
+        body.dark-mode .summary-header {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .summary-title {
+            font-weight: 600;
+            margin: 0;
+            color: var(--light-on-surface);
+        }
+        
+        body.dark-mode .summary-title {
+            color: var(--dark-on-surface);
+        }
+        
+        .regenerate-btn {
+            padding: var(--space-1) var(--space-3);
+            font-size: 0.75rem;
+            background: rgba(225, 193, 165, 0.1);
+            color: var(--brand-primary-darker);
+            border-radius: var(--radius-pill);
+        }
+        
+        body.dark-mode .regenerate-btn {
+            background: rgba(225, 193, 165, 0.2);
+            color: var(--brand-primary-light);
+        }
+        
+        .summary-content {
+            color: var(--light-on-surface-variant);
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        
+        body.dark-mode .summary-content {
+            color: var(--dark-on-surface-variant);
+        }
+        
+        .summary-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            min-height: 150px;
+        }
+        
+        /* Chat Panel */
+        .chat-panel {
+            background: var(--glass-light-strong);
+            border-radius: var(--radius-lg);
+            padding: var(--space-3);
+            transition: all var(--transition-medium);
+            position: relative;
+            flex: 0 0 auto;
+            height: 180px; /* Fixed height */
+            display: flex;
+            flex-direction: column;
+            max-height: 180px; /* Ensure it doesn't grow */
+            margin-bottom: 0; /* Ensure no bottom margin */
+        }
+        
+        .chat-panel.expanded {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: auto; /* Allow height to be determined by content */
+            max-height: calc(100% - 30px); /* Allow scrolling within panel */
+            z-index: 100;
+            margin-top: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        body.dark-mode .chat-panel {
+            background: var(--glass-dark-strong);
+        }
+        
+        .chat-toggle-btn {
+            position: absolute;
+            top: -20px;
+            right: 20px;
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-pill);
+            background: var(--brand-primary);
+            color: var(--light-on-surface);
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 10;
+            box-shadow: var(--shadow-md);
+            transition: all var(--transition-fast);
+        }
+        
+        .chat-toggle-btn:hover {
+            background: var(--brand-primary-dark);
+        }
+        
+        .chat-header {
+            margin-bottom: var(--space-3);
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            flex: 0 0 auto;
+        }
+        
+        .chat-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin: 0;
+            color: var(--light-on-surface);
+        }
+        
+        body.dark-mode .chat-title {
+            color: var(--dark-on-surface);
+        }
+        
+        .chat-title i {
+            color: var(--brand-primary);
+        }
+        
+        .chat-messages {
+            overflow-y: auto;
+            flex: 1;
+            padding-right: var(--space-2);
+            margin-bottom: var(--space-4);
+            scrollbar-width: thin;
+            scrollbar-color: var(--brand-primary) var(--light-surface-variant);
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-3);
+            padding: var(--space-2);
+            /* Fixed height calculation to prevent growing */
+            max-height: calc(100% - 80px); /* Account for header and input */
+        }
+        
+        .chat-messages::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        .chat-messages::-webkit-scrollbar-thumb {
+            background-color: var(--brand-primary);
+            border-radius: var(--radius-pill);
+        }
+        
+        .chat-messages::-webkit-scrollbar-track {
+            background-color: var(--light-surface-variant);
+            border-radius: var(--radius-pill);
+        }
+        
+        body.dark-mode .chat-messages::-webkit-scrollbar-track {
+            background-color: var(--dark-surface-variant);
+        }
+        
+        .message {
+            display: flex;
+            animation: message-fade-in var(--transition-medium) ease-out;
+            margin-bottom: var(--space-2);
+            width: 100%;
+        }
+        
+        @keyframes message-fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .message-bubble {
+            padding: var(--space-3) var(--space-4);
+            border-radius: var(--radius-lg);
+            max-width: 85%;
+            line-height: 1.5;
+            position: relative;
+            font-size: 0.9rem;
+        }
+        
+        .user-message {
+            justify-content: flex-end;
+            align-self: flex-end;
+        }
+        
+        .bot-message {
+            justify-content: flex-start;
+            align-self: flex-start;
+        }
+        
+        .system-message {
+            justify-content: center;
+            align-self: center;
+            width: 100%;
+        }
+        
+        .user-message .message-bubble {
+            background: var(--brand-primary);
+            color: var(--light-on-surface);
+            border-bottom-right-radius: var(--radius-sm);
+        }
+        
+        .bot-message .message-bubble {
+            background: var(--light-surface-variant);
+            color: var(--light-on-surface);
+            border-bottom-left-radius: var(--radius-sm);
+        }
+        
+        body.dark-mode .bot-message .message-bubble {
+            background: var(--dark-surface-variant);
+            color: var(--dark-on-surface);
+        }
+        
+        .system-message .message-bubble {
+            background: rgba(225, 193, 165, 0.1);
+            color: var(--light-on-surface-variant);
+            text-align: center;
+            width: 100%;
+        }
+        
+        body.dark-mode .system-message .message-bubble {
+            background: rgba(225, 193, 165, 0.15);
+            color: var(--dark-on-surface-variant);
+        }
+        
+        .chat-input {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            flex: 0 0 auto;
+            margin-top: auto;
+            position: relative;
+        }
+        
+        .chat-input-field {
+            flex: 1;
+            padding: var(--space-3);
+            border-radius: var(--radius-pill);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            background: var(--light-surface-variant);
+            color: var(--light-on-surface);
+            transition: all var(--transition-fast);
+        }
+        
+        .chat-input-field:focus {
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 3px rgba(225, 193, 165, 0.25);
+            outline: none;
+        }
+        
+        body.dark-mode .chat-input-field {
+            background: var(--dark-surface-variant);
+            border-color: rgba(255, 255, 255, 0.1);
+            color: var(--dark-on-surface);
+        }
+        
+        .send-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-pill);
+            background: var(--brand-primary);
+            color: var(--light-on-surface);
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        
+        .send-btn:hover {
+            background: var(--brand-primary-dark);
+        }
+        
+        /* Summary collapsed state */
+        .summary-collapsed .summary-panel {
+            height: 0;
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+            opacity: 0;
+            max-height: 0;
+            min-height: 0;
+        }
+        
+        .summary-collapsed .chat-panel {
+            position: absolute;
+            top: 30px; /* Allow space for toggle button */
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: auto;
+            max-height: calc(100% - 30px);
+            margin-top: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Footer */
+        .app-footer {
+            background: var(--glass-light);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            padding: var(--space-4) 0;
+            text-align: center;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            color: var(--light-on-surface-variant);
+            border-top: 1px solid rgba(255, 255, 255, 0.15);
+            z-index: var(--z-sticky);
+            font-size: 0.9rem;
+        }
+        
+        body.dark-mode .app-footer {
+            background: var(--glass-dark);
+            color: var(--dark-on-surface-variant);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        /* Animations */
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.1);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+        
+        @keyframes slide-up {
+            from {
+                opacity: 0;
+                transform: translateY(40px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* Loading indicators */
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(225, 193, 165, 0.3);
+            border-radius: 50%;
+            border-top-color: var(--brand-primary);
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        
+        .progress-bar {
+            width: 200px;
+            height: 4px;
+            background: rgba(225, 193, 165, 0.2);
+            border-radius: var(--radius-pill);
+            margin-top: var(--space-3);
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .progress-bar::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 30%;
+            background: var(--brand-primary);
+            border-radius: var(--radius-pill);
+            animation: progress 2s infinite;
+        }
+        
+        @keyframes progress {
+            0% {
+                left: -30%;
+                width: 30%;
+            }
+            50% {
+                width: 50%;
+            }
+            100% {
+                left: 100%;
+                width: 30%;
+            }
+        }
+        
+        .typing-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: var(--space-2);
+        }
+        
+        .typing-indicator span {
+            width: 6px;
+            height: 6px;
+            background: var(--brand-primary);
+            border-radius: 50%;
+            animation: typing 1s infinite;
+        }
+        
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes typing {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-4px);
+            }
+        }
+        
+        /* Mobile styles */
+        @media (max-width: 992px) {
+            .slide-container, .ai-panel {
+                height: auto;
+                min-height: 0;
+            }
+            
+            .slide-viewer {
+                height: 350px;
+            }
+            
+            .thumbnails-container {
+                padding: var(--space-2) var(--space-1);
+            }
+            
+            .thumbnail {
+                width: 90px;
+                height: 50px;
+            }
+            
+            .app-header {
+                padding: var(--space-2) var(--space-3);
+            }
+            
+            .header-logo {
+                height: 30px;
+            }
+            
+            .header-range {
+                display: none;
+            }
+            
+            /* User profile responsive styles */
+            .user-profile {
+                flex-direction: column;
+                align-items: flex-end;
+                gap: var(--space-1);
+                margin-right: var(--space-2);
+            }
+            
+            .user-greeting {
+                font-size: 0.8rem;
+                max-width: 120px;
+            }
+            
+            .logout-btn {
+                padding: 0.15rem 0.4rem;
+                font-size: 0.7rem;
+            }
+            
+            /* Mobile styling for Upload New button */
+            .header-actions {
+                gap: var(--space-2);
+            }
+            
+            #back-to-upload-btn {
+                font-size: 0.8rem;
+                padding: var(--space-1) var(--space-2);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            
+            .panel-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: var(--space-2);
+            }
+            
+            .goto-container {
+                width: 100%;
+            }
+            
+            .goto-input {
+                flex: 1;
+            }
+            
+            .summary-panel {
+                max-height: 300px;
+            }
+            
+            .chat-panel {
+                height: 180px;
+            }
+            
+            /* Mobile navigation controls */
+            .mobile-nav {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-top: var(--space-3);
+                padding: var(--space-2) var(--space-3);
+                background: var(--light-surface-variant);
+                border-radius: var(--radius-pill);
+            }
+            
+            body.dark-mode .mobile-nav {
+                background: var(--dark-surface-variant);
+            }
+            
+            .mobile-nav-control {
+                display: flex;
+                align-items: center;
+                gap: var(--space-2);
+            }
+            
+            .mobile-nav-btn {
+                width: 40px;
+                height: 40px;
+                border-radius: var(--radius-pill);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: var(--light-surface);
+                color: var(--light-on-surface);
+                border: none;
+                box-shadow: var(--shadow-sm);
+            }
+            
+            body.dark-mode .mobile-nav-btn {
+                background: var(--dark-surface);
+                color: var(--dark-on-surface);
+            }
+            
+            /* Fixed position chat for mobile - anchored to bottom */
+            .chat-panel.expanded {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                top: auto; /* Override any top position */
+                height: 70vh; /* Take 70% of viewport height */
+                max-height: 70vh; /* Enforce max height */
+                z-index: 1050;
+                margin: 0;
+                border-bottom-left-radius: 0;
+                border-bottom-right-radius: 0;
+                border-top-left-radius: var(--radius-lg);
+                border-top-right-radius: var(--radius-lg);
+                box-shadow: 0 -5px 25px rgba(0, 0, 0, 0.15);
+            }
+            
+            body.dark-mode .chat-panel.expanded {
+                box-shadow: 0 -5px 25px rgba(0, 0, 0, 0.3);
+            }
+            
+            /* Adjust toggle button position */
+            .chat-panel.expanded .chat-toggle-btn {
+                top: -20px;
+                right: 20px;
+            }
+            
+            /* Improved mobile chat scrolling with fixed heights */
+            .chat-panel.expanded .chat-messages {
+                max-height: calc(70vh - 110px); /* Account for header and input in expanded state */
+                overflow-y: auto;
+            }
+            
+            .summary-collapsed .chat-messages {
+                max-height: calc(100% - 110px);
+            }
+            
+            /* When in collapsed summary state on mobile */
+            .summary-collapsed .chat-panel.expanded {
+                height: 70vh;
+                max-height: 70vh;
+                position: fixed;
+            }
+            
+            /* ... other mobile styles ... */
+        }
+        
+        @media (max-width: 576px) {
+            .upload-card {
+                padding: var(--space-4);
+            }
+            
+            .upload-title {
+                font-size: 1.5rem;
+            }
+            
+            .upload-area {
+                padding: var(--space-4);
+            }
+            
+            .slide-viewer {
+                height: 250px;
+            }
+            
+            .thumbnail {
+                width: 70px;
+                height: 40px;
+            }
+            
+            .slide-control-btn {
+                width: 40px;
+                height: 40px;
+                font-size: 1rem;
+            }
+            
+            /* User profile on very small screens */
+            .user-profile {
+                margin-right: var(--space-1);
+                position: relative;
+            }
+            
+            .user-greeting {
+                display: none;
+            }
+            
+            .logout-btn {
+                padding: 0.15rem 0.3rem;
+                font-size: 0.65rem;
+                min-width: 50px;
+            }
+            
+            .logout-btn i {
+                margin-right: 0;
+            }
+            
+            /* Even smaller Upload New button for very small screens */
+            #back-to-upload-btn {
+                font-size: 0.75rem;
+                padding: var(--space-1) var(--space-2);
+                min-height: 32px;
+            }
+            
+            #back-to-upload-btn i {
+                margin-right: 2px;
+            }
+            
+            .summary-panel {
+                padding: var(--space-3);
+                max-height: 250px;
+            }
+            
+            .chat-panel {
+                height: 180px;
+            }
+            
+            /* Improved mobile chat experience */
+            .summary-collapsed .chat-panel {
+                height: 350px;
+                max-height: 350px;
+            }
+            
+            /* Even more compact for very small screens */
+            .chat-panel.expanded {
+                margin: 0.5rem;
+                height: calc(100vh - 100px);
+            }
+            
+            /* Make sure buttons are finger-sized for touch */
+            .slide-control-btn, .send-btn, .mobile-nav-btn {
+                min-width: 44px;
+                min-height: 44px;
+            }
+            
+            /* Ensure form inputs are large enough for mobile */
+            .chat-input-field, .goto-input {
+                min-height: 44px;
+            }
+        }
+        
+        /* Enhanced glassmorphism for cards and panel elements */
+        .card, .summary-panel, .chat-panel, .upload-card, .app-header, .app-footer, .slide-viewer {
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        body.dark-mode .card, 
+        body.dark-mode .summary-panel, 
+        body.dark-mode .chat-panel,
+        body.dark-mode .upload-card, 
+        body.dark-mode .app-header, 
+        body.dark-mode .app-footer,
+        body.dark-mode .slide-viewer {
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <!-- Upload Section -->
+        <div id="upload-section">
+            <div class="upload-container">
+                <div class="upload-card">
+                    <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="upload-logo">
+                    <h1 class="upload-title">Upload Your Presentation</h1>
+                    <p class="upload-description">Upload your slides (PDF format) for AI-powered analysis and summaries</p>
+                    
+                    <form id="upload-form" enctype="multipart/form-data">
+                        <label for="slide-file" class="d-block">
+                            <div class="upload-area">
+                                <input type="file" id="slide-file" name="file" accept=".pdf" class="d-none">
+                                <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                                <p class="upload-text">Drag & drop your PDF file here<br>or click to browse</p>
+                            </div>
+                        </label>
+                        
+                        <div id="file-name"></div>
+                        
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="fas fa-upload me-2"></i>Upload & Analyze
+                        </button>
+                    </form>
+                    
+                    <div id="upload-status" class="mt-4 text-center" style="display: none;"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Results Section -->
+        <div id="results-section">
+            <!-- App Header -->
+            <header class="app-header">
+                <div class="container">
+                    <div class="header-content">
+                        <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="header-logo">
+                        
+                        <div class="header-range">
+                            <label for="slide-range-start">Show slides</label>
+                            <input type="number" id="slide-range-start" class="form-control form-control-sm" min="1" value="1">
+                            <span>to</span>
+                            <input type="number" id="slide-range-end" class="form-control form-control-sm" min="1" value="10">
+                            <button id="apply-range-btn" class="btn btn-primary btn-sm">Apply</button>
+                        </div>
+                        
+                        <div class="header-actions">
+                            <div class="user-profile">
+                                {% if current_user.is_authenticated %}
+                                <span class="user-greeting">Hello, {{ current_user.name }}</span>
+                                <a href="{{ url_for('logout') }}" class="btn btn-outline btn-sm logout-btn">
+                                    <i class="fas fa-sign-out-alt me-1"></i>Logout
+                                </a>
+                                {% endif %}
+                            </div>
+                            <button id="back-to-upload-btn" class="btn btn-outline">
+                                <i class="fas fa-arrow-left me-1"></i>Upload New
+                            </button>
+                            
+                            <div id="theme-toggle" class="theme-switch">
+                                <div class="switch-handle">
+                                    <i class="fas fa-sun"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </header>
+            
+            <div class="container">
+                <div class="row g-4">
+                    <!-- Left Column: Slide Viewer -->
+                    <div class="col-lg-8">
+                        <div class="slide-container">
+                            <div class="slide-viewer">
+                                <div id="current-slide" class="slide-content">
+                                    <div class="slide-loading">
+                                        <div class="spinner"></div>
+                                        <p class="mt-3">Loading slide...</p>
+                                        <div class="progress-bar"></div>
+                                    </div>
+                                </div>
+                                
+                                <div class="slide-controls">
+                                    <button id="prev-slide" class="slide-control-btn">
+                                        <i class="fas fa-chevron-left"></i>
+                                    </button>
+                                    <button id="next-slide" class="slide-control-btn">
+                                        <i class="fas fa-chevron-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div id="slide-thumbnails" class="thumbnails-container">
+                                <!-- Thumbnails will be added here by JavaScript -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Right Column: AI Analysis -->
+                    <div class="col-lg-4">
+                        <div class="ai-panel">
+                            <div class="panel-header">
+                                <div class="slide-info">
+                                    <span id="current-slide-num" class="slide-badge">Slide 1</span>
+                                    <span id="total-slides" class="total-badge">of 10</span>
+                                </div>
+                                
+                                <div class="goto-container">
+                                    <input type="number" id="goto-slide" class="form-control form-control-sm goto-input" placeholder="Go to" min="1">
+                                    <button id="goto-btn" class="btn btn-primary btn-sm goto-btn">
+                                        <i class="fas fa-arrow-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div id="summary-container" class="summary-container">
+                                <div class="summary-panel">
+                                    <div class="summary-header">
+                                        <h3 id="slide-title" class="summary-title">Slide Title</h3>
+                                        <button id="regenerate-summary" class="btn regenerate-btn" title="Regenerate Summary">
+                                            <i class="fas fa-redo-alt"></i> Regenerate
+                                        </button>
+                                    </div>
+                                    
+                                    <div id="slide-summary" class="summary-content">
+                                        <div class="summary-loading">
+                                            <div class="spinner"></div>
+                                            <p class="mt-3">Generating summary...</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Chat Panel -->
+                                <div id="chat-panel" class="chat-panel">
+                                    <button id="toggle-chat-btn" class="chat-toggle-btn" title="Toggle chat">
+                                        <i class="fas fa-comments"></i>
+                                    </button>
+                                    
+                                    <div class="chat-header">
+                                        <h4 class="chat-title"><i class="fas fa-comments me-2"></i>Ask about this slide</h4>
+                                    </div>
+                                    
+                                    <div id="chat-messages" class="chat-messages">
+                                        <div class="message system-message">
+                                            <div class="message-bubble">
+                                                Hello! Ask me anything about this slide or the entire presentation.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="chat-input">
+                                        <input type="text" id="user-input" class="chat-input-field" placeholder="Ask a question...">
+                                        <button id="send-btn" class="send-btn">
+                                            <i class="fas fa-paper-plane"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Footer -->
+            <footer class="app-footer">
+                <div class="container">
+                    <p class="mb-0">Sumora by Kauzway.ai</p>
+                </div>
+            </footer>
+        </div>
+    </div>
+    
+    <!-- Reference the original script.js for API connections -->
+    <script src="/static/js/script.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Authentication error handling
+            function handleAuthError(response) {
+                if (response.status === 401 || response.status === 403) {
+                    // Authentication failed, redirect to login
+                    window.location.href = "{{ url_for('login') }}";
+                    return true;
+                }
+                return false;
+            }
+            
+            // Override fetch to handle authentication errors globally
+            const originalFetch = window.fetch;
+            window.fetch = async function(url, options) {
+                const response = await originalFetch(url, options);
+                
+                if (handleAuthError(response)) {
+                    return new Response(JSON.stringify({ error: 'Authentication required' }), {
+                        status: 401,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+                
+                return response;
+            };
+            
+            // File Upload Handler
+            const fileInput = document.getElementById('slide-file');
+            const fileNameDisplay = document.getElementById('file-name');
+            const uploadForm = document.getElementById('upload-form');
+            const uploadSection = document.getElementById('upload-section');
+            const resultsSection = document.getElementById('results-section');
+            const backToUploadBtn = document.getElementById('back-to-upload-btn');
+            
+            // Display filename when file is selected
+            fileInput.addEventListener('change', function() {
+                if (this.files && this.files.length > 0) {
+                    const fileName = this.files[0].name;
+                    fileNameDisplay.innerHTML = `<i class="fas fa-file-pdf me-2"></i>${fileName}`;
+                    fileNameDisplay.style.display = 'block';
+                } else {
+                    fileNameDisplay.textContent = '';
+                    fileNameDisplay.style.display = 'none';
+                }
+            });
+            
+            // Handle back to upload button
+            backToUploadBtn.addEventListener('click', function() {
+                window.location.href = "{{ url_for('app_index') }}";
+            });
+            
+            // Completely revised theme toggle implementation
+            const themeToggle = document.getElementById('theme-toggle');
+            
+            // Direct event binding with priority on click handling
+            if (themeToggle) {
+                // Forcibly remove any existing event listeners
+                themeToggle.replaceWith(themeToggle.cloneNode(true));
+                
+                // Get the fresh reference
+                const freshThemeToggle = document.getElementById('theme-toggle');
+                
+                // Set initial state based on localStorage or system preference
+                const prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const savedDarkMode = localStorage.getItem('darkMode');
+                const isDarkMode = savedDarkMode ? savedDarkMode === 'true' : prefersDarkMode;
+                
+                // Initial setup
+                if (isDarkMode) {
+                    document.body.classList.add('dark-mode');
+                    freshThemeToggle.classList.add('active');
+                    const handleIcon = freshThemeToggle.querySelector('.switch-handle i');
+                    if (handleIcon) {
+                        handleIcon.className = 'fas fa-moon';
+                    }
+                }
+                
+                // Store the preference
+                localStorage.setItem('darkMode', isDarkMode);
+                
+                // Direct click handler - most reliable method
+                freshThemeToggle.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Toggle dark mode class on body
+                    document.body.classList.toggle('dark-mode');
+                    // Toggle active class on switch
+                    freshThemeToggle.classList.toggle('active');
+                    
+                    // Update icon
+                    const isDark = document.body.classList.contains('dark-mode');
+                    const handleIcon = freshThemeToggle.querySelector('.switch-handle i');
+                    if (handleIcon) {
+                        handleIcon.className = isDark ? 'fas fa-moon' : 'fas fa-sun';
+                    }
+                    
+                    // Store the preference
+                    localStorage.setItem('darkMode', isDark);
+                    
+                    // Debugging
+                    console.log('Theme toggled. Dark mode:', isDark);
+                    return true;
+                };
+            }
+            
+            // Chat toggle functionality with improved scrolling behavior
+            const toggleChatBtn = document.getElementById('toggle-chat-btn');
+            const summaryContainer = document.getElementById('summary-container');
+            const chatPanel = document.getElementById('chat-panel');
+            const chatMessages = document.getElementById('chat-messages');
+            
+            toggleChatBtn.addEventListener('click', function() {
+                summaryContainer.classList.toggle('summary-collapsed');
+                chatPanel.classList.toggle('expanded');
+                
+                const chatIcon = toggleChatBtn.querySelector('i');
+                if (summaryContainer.classList.contains('summary-collapsed')) {
+                    toggleChatBtn.title = 'Show summary';
+                    chatIcon.className = 'fas fa-file-alt';
+                    
+                    // Scroll chat messages to bottom after transition
+                    setTimeout(() => {
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                    }, 300);
+                } else {
+                    toggleChatBtn.title = 'Expand chat';
+                    chatIcon.className = 'fas fa-comments';
+                }
+            });
+            
+            // Chat functionality
+            const userInput = document.getElementById('user-input');
+            const sendBtn = document.getElementById('send-btn');
+            
+            // Add chat messages handling
+            function addChatMessage(message, type) {
+                const messageEl = document.createElement('div');
+                messageEl.className = `message ${type}-message`;
+                
+                const bubbleEl = document.createElement('div');
+                bubbleEl.className = 'message-bubble';
+                bubbleEl.innerHTML = message;
+                
+                messageEl.appendChild(bubbleEl);
+                chatMessages.appendChild(messageEl);
+                
+                // Scroll to bottom
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            
+            // Send message on Enter key
+            userInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && this.value.trim()) {
+                    sendUserMessage();
+                }
+            });
+            
+            // Send message on button click
+            sendBtn.addEventListener('click', function() {
+                if (userInput.value.trim()) {
+                    sendUserMessage();
+                }
+            });
+            
+            function sendUserMessage() {
+                const message = userInput.value.trim();
+                addChatMessage(message, 'user');
+                userInput.value = '';
+                
+                // Show typing indicator
+                const typingEl = document.createElement('div');
+                typingEl.className = 'message bot-message typing';
+                typingEl.innerHTML = `
+                    <div class="message-bubble">
+                        Typing<span class="typing-indicator"><span></span><span></span><span></span></span>
+                    </div>
+                `;
+                chatMessages.appendChild(typingEl);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                
+                // Simulate bot response
+                setTimeout(() => {
+                    // Remove typing indicator
+                    chatMessages.removeChild(typingEl);
+                    
+                    // Add bot response
+                    const botResponses = [
+                        "I've analyzed this slide for you. The key points are the quarterly revenue growth of 15% and market expansion into three new regions.",
+                        "This slide shows our new product features that will be released next month. The main highlight is the improved user interface.",
+                        "Looking at the data from this slide, I can see that our customer satisfaction scores have increased by 8% since implementing the new support system.",
+                        "This slide contains important information about our competitive landscape. The most significant change is Competitor X's new product line."
+                    ];
+                    
+                    const randomResponse = botResponses[Math.floor(Math.random() * botResponses.length)];
+                    addChatMessage(randomResponse, 'bot');
+                }, 1500);
+            }
+            
+            // Improve mobile experience
+            function enhanceMobileExperience() {
+                const isMobile = window.innerWidth < 992;
+                
+                // Add swipe gestures for mobile
+                if (isMobile) {
+                    // Handle touch events for the slide viewer
+                    const slideViewer = document.querySelector('.slide-viewer');
+                    if (slideViewer) {
+                        let touchStartX = 0;
+                        let touchEndX = 0;
+                        
+                        slideViewer.addEventListener('touchstart', function(e) {
+                            touchStartX = e.changedTouches[0].screenX;
+                        }, false);
+                        
+                        slideViewer.addEventListener('touchend', function(e) {
+                            touchEndX = e.changedTouches[0].screenX;
+                            handleSwipe();
+                        }, false);
+                        
+                        function handleSwipe() {
+                            const prevBtn = document.getElementById('prev-slide');
+                            const nextBtn = document.getElementById('next-slide');
+                            
+                            if (touchEndX < touchStartX - 50) {
+                                // Swipe left (next slide)
+                                if (nextBtn) nextBtn.click();
+                            } else if (touchEndX > touchStartX + 50) {
+                                // Swipe right (previous slide)
+                                if (prevBtn) prevBtn.click();
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Update mobile slide indicator
+            function updateMobileSlideIndicator() {
+                // Function removed as we no longer have the mobile text indicator
+            }
+            
+            // Call on page load and resize
+            enhanceMobileExperience();
+            window.addEventListener('resize', enhanceMobileExperience);
+            
+            // Monitor slide changes - Modified to remove mobile indicator updates
+            const slides = document.querySelectorAll('.thumbnail');
+            if (slides.length) {
+                slides.forEach(slide => {
+                    slide.addEventListener('click', function() {
+                        // No longer calling updateMobileSlideIndicator
+                    });
+                });
+                
+                // No longer updating mobile indicator
+                document.getElementById('prev-slide').addEventListener('click', function() {});
+                document.getElementById('next-slide').addEventListener('click', function() {});
+                document.getElementById('goto-btn').addEventListener('click', function() {});
+            }
+        });
+    </script>
+
+    <!-- Add script to ensure light mode is default at start -->
+    <script>
+        // Force light mode as default on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Make sure dark mode is removed
+            document.body.classList.remove('dark-mode');
+            
+            // Reset toggle button if it exists
+            const themeToggle = document.getElementById('theme-toggle');
+            if (themeToggle) {
+                themeToggle.classList.remove('active');
+                const handleIcon = themeToggle.querySelector('.switch-handle i');
+                if (handleIcon) {
+                    handleIcon.className = 'fas fa-sun';
+                }
+            }
+            
+            // Store light mode preference
+            localStorage.setItem('darkMode', 'false');
+        });
+    </script>
+</body>
+</html>

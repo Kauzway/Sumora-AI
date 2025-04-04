@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Terms of Service - Sumora</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='Sumora_images/Sumora Logo.png') }}">
+    <style>
+        /* Reset and Base Styles */
+        :root {
+            --primary: #d9c2a8;
+            --primary-dark: #c4ac8f;
+            --primary-light: #e5d6c5;
+            --text: #111111;
+            --text-light: #555555;
+            --background: #ffffff;
+            --secondary-bg: #f9f5f0;
+            --border-color: rgba(217, 194, 168, 0.2);
+            --glass-bg: rgba(255, 255, 255, 0.8);
+            --glass-border: rgba(255, 255, 255, 0.18);
+            --blur-effect: 12px;
+            --gradient-bg: linear-gradient(135deg, #f5efe6 0%, #f9f4ec 50%, #f5ede2 100%);
+            --dark-bg: #0c1119;
+            --dark-text: #ffffff;
+            --dark-text-light: rgba(255, 255, 255, 0.7);
+            --blob-color-1: rgba(217, 194, 168, 0.3);
+            --blob-color-2: rgba(217, 194, 168, 0.25);
+            --blob-color-3: rgba(229, 214, 197, 0.2);
+            --white-blob: rgba(255, 255, 255, 0.7);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        body {
+            color: var(--text);
+            background-color: var(--background);
+            line-height: 1.6;
+            font-size: 16px;
+            overflow-x: hidden;
+            position: relative;
+            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M11 18c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm48 25c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm-43-7c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm63 31c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM34 90c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm56-76c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM12 86c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm28-65c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm23-11c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-6 60c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm29 22c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zM32 63c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm57-13c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-9-21c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM60 91c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM35 41c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM12 60c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2z' fill='%23d9c2a8' fill-opacity='0.02' fill-rule='evenodd'/%3E%3C/svg%3E");
+        }
+        
+        /* Blobs */
+        .blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(50px);
+            opacity: 0.8;
+            pointer-events: none;
+            z-index: -1;
+        }
+        
+        .blob-1 {
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle at center, var(--blob-color-1) 0%, rgba(217, 194, 168, 0.1) 50%, rgba(255, 255, 255, 0) 80%);
+            top: -200px;
+            right: -100px;
+            animation: float-slow 18s ease-in-out infinite alternate;
+        }
+        
+        .blob-2 {
+            width: 700px;
+            height: 700px;
+            background: radial-gradient(circle at 30% 40%, var(--blob-color-2) 0%, rgba(217, 194, 168, 0.05) 60%, rgba(255, 255, 255, 0) 85%);
+            bottom: 10%;
+            left: -200px;
+            animation: float-slow-reverse 15s ease-in-out infinite alternate;
+            transform: rotate(45deg);
+        }
+        
+        @keyframes float-slow {
+            0% {
+                transform: translate(0, 0) scale(1) rotate(0deg);
+            }
+            100% {
+                transform: translate(30px, 30px) scale(1.05) rotate(5deg);
+            }
+        }
+        
+        @keyframes float-slow-reverse {
+            0% {
+                transform: translate(0, 0) scale(1.05) rotate(0deg);
+            }
+            100% {
+                transform: translate(-20px, 20px) scale(1) rotate(-5deg);
+            }
+        }
+        
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Poppins', sans-serif;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        
+        h1 {
+            font-size: clamp(2.5rem, 5vw, 3.5rem);
+            letter-spacing: -0.02em;
+            margin-bottom: 2rem;
+            color: var(--primary-dark);
+        }
+        
+        h2 {
+            font-size: clamp(1.5rem, 3vw, 2rem);
+            letter-spacing: -0.02em;
+            margin-top: 2.5rem;
+            margin-bottom: 1rem;
+            color: var(--primary-dark);
+        }
+        
+        p {
+            margin-bottom: 1rem;
+            font-size: clamp(1rem, 1.2vw, 1.125rem);
+        }
+        
+        a {
+            color: var(--primary-dark);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        a:hover {
+            color: var(--text);
+            text-decoration: underline;
+        }
+        
+        /* Header */
+        header {
+            padding: 1rem 0;
+            position: fixed;
+            top: 1.5rem;
+            left: 50%;
+            transform: translateX(-50%);
+            width: calc(100% - 3rem);
+            max-width: 1400px;
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(var(--blur-effect));
+            -webkit-backdrop-filter: blur(var(--blur-effect));
+            z-index: 100;
+            border-radius: 20px;
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+        }
+        
+        .header-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 1.5rem;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+        }
+        
+        .logo img:first-child {
+            height: 40px;
+            width: 40px;
+            margin-right: 12px;
+        }
+        
+        .logo-text {
+            height: 24px;
+            width: auto;
+            object-fit: contain;
+        }
+        
+        /* Container */
+        .container {
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 10rem 2rem 4rem;
+            position: relative;
+            z-index: 2;
+        }
+        
+        /* Content Card */
+        .content-card {
+            background-color: var(--glass-bg);
+            backdrop-filter: blur(var(--blur-effect));
+            -webkit-backdrop-filter: blur(var(--blur-effect));
+            border-radius: 20px;
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
+            padding: 3rem;
+            margin-bottom: 2rem;
+        }
+        
+        /* Footer */
+        .footer {
+            text-align: center;
+            margin-top: 2rem;
+            padding: 1rem 0;
+        }
+        
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-top: 1rem;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .content-card {
+                padding: 2rem 1.5rem;
+            }
+            
+            header {
+                top: 1rem;
+                width: calc(100% - 2rem);
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Background Blobs -->
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="/" class="logo">
+                <img src="{{ url_for('static', filename='Sumora_images/Sumora Logo.png') }}" alt="Sumora Logo">
+                <img src="{{ url_for('static', filename='Sumora_images/Sumora text.png') }}" alt="Sumora" class="logo-text">
+            </a>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="content-card">
+            <h1>Terms of Service</h1>
+            
+            <p><strong>Last Updated: March 26, 2024</strong></p>
+            
+            <p>Welcome to Sumora. Please read these Terms of Service ("Terms") carefully before using our website and services.</p>
+            
+            <h2>1. Acceptance of Terms</h2>
+            <p>By accessing or using Sumora, you agree to be bound by these Terms. If you do not agree to these Terms, please do not use our services.</p>
+            
+            <h2>2. Description of Service</h2>
+            <p>Sumora provides an AI-powered study tool that helps users understand and interact with educational slide content. Our services include slide summarization, content analysis, and an AI assistant to answer questions about the slide content.</p>
+            
+            <h2>3. User Accounts</h2>
+            <p>To access certain features of our service, you must create an account using Google OAuth. You are responsible for maintaining the confidentiality of your account information and for all activities that occur under your account.</p>
+            
+            <h2>4. Intellectual Property</h2>
+            <p>The content, organization, graphics, design, and other matters related to Sumora are protected under applicable copyrights and other proprietary laws. The copying, redistribution, or publication of any part of Sumora is prohibited without prior written consent.</p>
+            
+            <h2>5. User Content</h2>
+            <p>You retain ownership of any content you upload to our platform. By uploading content, you grant us a license to use, store, and process that content for the purpose of providing our services.</p>
+            
+            <h2>6. Limitation of Liability</h2>
+            <p>Sumora and its services are provided "as is" without warranties of any kind. In no event shall Sumora be liable for any damages arising out of the use or inability to use our services.</p>
+            
+            <h2>7. Changes to Terms</h2>
+            <p>We reserve the right to modify these Terms at any time. We will provide notice of significant changes to these Terms by posting the new Terms on our website.</p>
+            
+            <h2>8. Governing Law</h2>
+            <p>These Terms shall be governed by the laws of the jurisdiction in which Sumora operates, without regard to its conflict of law provisions.</p>
+        </div>
+        
+        <div class="footer">
+            <div class="footer-links">
+                <a href="/">Home</a>
+                <a href="/privacy-policy">Privacy Policy</a>
+                <a href="/login">Login</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html> 

@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+
+# Version Control
+.git
+.gitignore
+
+# IDE specific files
+.vscode/
+.idea/
+
+# Temporary files
+*.log
+*.swp
+.DS_Store
+
+# Don't exclude requirements.txt
+!requirements.txt 
