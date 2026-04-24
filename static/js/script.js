@@ -305,12 +305,25 @@ async function fetchSlideSummaries() {
                 continue; // Try the next batch
             }
             
-            // Update slideData with new summaries
+            // Collect slide indexes the server reported as still-processing so
+            // we don't overwrite them with a "Basic Summary" placeholder below.
+            const pendingSlideNums = Array.isArray(data._pending) ? data._pending : [];
+            pendingSlideNums.forEach(n => {
+                const idx = parseInt(n, 10) - 1;
+                if (idx >= 0 && idx < slideData.length) {
+                    slideData[idx].pending = true;
+                    slideData[idx].isLoading = true;
+                }
+            });
+
+            // Update slideData with new summaries (skip the _pending marker key).
             for (const [slideNum, summary] of Object.entries(data)) {
-                const slideIndex = parseInt(slideNum) - 1;
+                if (slideNum === '_pending') continue;
+                const slideIndex = parseInt(slideNum, 10) - 1;
                 if (slideIndex >= 0 && slideIndex < slideData.length) {
                     slideData[slideIndex].summary = summary;
                     slideData[slideIndex].isLoading = false;
+                    slideData[slideIndex].pending = false;
                 }
             }
             
@@ -320,8 +333,11 @@ async function fetchSlideSummaries() {
             }
         }
         
-        // Ensure all slides have at least a basic summary
+        // Ensure all slides have at least a basic summary — but leave slides
+        // whose transcription is still in progress untouched; the status poll
+        // will retry /get_summaries once they're ready.
         slideData.forEach((slide, index) => {
+            if (slide.pending) return;
             if (!slide.summary || slide.summary === "Loading summary...") {
                 slide.summary = `**Basic Summary** - This is slide ${slide.slideNumber} of the presentation. A detailed summary couldn't be generated automatically.`;
                 slide.isLoading = false;
@@ -904,9 +920,11 @@ function streamSummary(slideNumber, forceRegenerate = false) {
         (forceRegenerate ? '&force_regenerate=true' : '')
     );
     
-    // Set a timeout to close the connection if it gets stuck
+    // Initial watchdog: 60s before we give up on a stalled stream. The
+    // progress/chunk handlers reset this clock, so normal long transcriptions
+    // don't trip it as long as the server keeps sending events.
     streamTimeout = setTimeout(() => {
-        console.warn(`Stream timeout after 30 seconds for slide ${slideNumber}`);
+        console.warn(`Stream stalled without events for slide ${slideNumber}`);
         if (!isStreamComplete) {
             eventSource.close();
             
@@ -955,7 +973,7 @@ function streamSummary(slideNumber, forceRegenerate = false) {
             // Reset loading flag
             isSummaryLoading = false;
         }
-    }, 30000); // 30 second timeout
+    }, 60000); // 60s watchdog — reset whenever new events arrive
     
     // Add an event for connection open
     eventSource.addEventListener('open', function(e) {
@@ -974,10 +992,16 @@ function streamSummary(slideNumber, forceRegenerate = false) {
         }
     });
     
-    // Handle progress events
+    // Handle progress events. These fire during "Transcribing slide N..." and
+    // similar waiting phases, so we also reset the stream watchdog to avoid
+    // timing out a slow-but-progressing request.
     eventSource.addEventListener('progress', function(e) {
         console.log(`Progress update for slide ${slideNumber}: ${e.data}`);
-        // Show progress message
+        clearTimeout(streamTimeout);
+        streamTimeout = setTimeout(() => {
+            console.warn(`Stream timeout (no progress) for slide ${slideNumber}`);
+            if (!isStreamComplete) eventSource.close();
+        }, 60000);
         slideSummary.innerHTML = `
             <div class="text-center">
                 <div class="spinner-border text-primary" role="status">

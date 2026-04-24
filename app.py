@@ -248,6 +248,83 @@ def _set_overall_state(session_id, overall):
             sess["overall"] = overall
 
 
+def _get_slide_state(session_id, slide_num):
+    """Snapshot a single slide's status entry (or None)."""
+    with status_lock:
+        sess = slide_status.get(session_id)
+        if not sess:
+            return None
+        slot = sess.get("slides", {}).get(str(slide_num))
+        return dict(slot) if slot else None
+
+
+def wait_for_slide_ready(session_id, slide_num, max_wait_seconds=45.0, poll_interval=0.5):
+    """Poll slide_status until this slide's transcription is 'done'.
+
+    Yields dicts of the form {"progress": "Transcribing slide N..."} at every
+    poll tick so callers can forward them as SSE progress events. Terminates
+    with one of:
+        {"ready": True}             — transcription is done; caller may proceed.
+        {"ready": False, "reason": "failed"|"timeout"|"no_session"}
+
+    Callers that don't need progress events can just drain the generator and
+    look at the final dict.
+    """
+    deadline = time.time() + max_wait_seconds
+    last_label = None
+    while True:
+        state = _get_slide_state(session_id, slide_num)
+        if state is None:
+            yield {"ready": False, "reason": "no_session"}
+            return
+
+        tstate = state.get("transcription")
+        if tstate == "done":
+            yield {"ready": True}
+            return
+        if tstate == "failed":
+            # Only give up if no retries are in flight. The pipeline will flip
+            # it back to "processing" when retrying.
+            retries = state.get("retries", 0) or 0
+            if retries >= MAX_RETRIES_PER_SLIDE:
+                yield {"ready": False, "reason": "failed",
+                       "error": state.get("error")}
+                return
+
+        if time.time() >= deadline:
+            yield {"ready": False, "reason": "timeout"}
+            return
+
+        label = f"Transcribing slide {slide_num}..."
+        if tstate == "processing":
+            label = f"Transcribing slide {slide_num}..."
+        elif (state.get("retries") or 0) > 0:
+            label = f"Retrying slide {slide_num} (attempt {state['retries'] + 1})..."
+        if label != last_label:
+            yield {"progress": label}
+            last_label = label
+
+        time.sleep(poll_interval)
+
+
+def build_neighbor_context_from_texts(slide_texts, slide_num, radius=2, max_chars=500):
+    """Same shape as _collect_neighbor_context but takes a slide_texts dict
+    (used by interactive endpoints that don't have the structured dict in hand)."""
+    parts = []
+    total = len(slide_texts)
+    for offset in range(-radius, radius + 1):
+        if offset == 0:
+            continue
+        n = slide_num + offset
+        if n < 1 or n > total:
+            continue
+        text = (slide_texts.get(str(n)) or "").strip()
+        if not text:
+            continue
+        parts.append(f"Slide {n}:\n{text[:max_chars].strip()}")
+    return "\n\n".join(parts)
+
+
 # ---------- PPTX -> PDF conversion ----------
 
 SUPPORTED_UPLOAD_EXTENSIONS = {".pdf", ".pptx", ".ppt"}
@@ -959,44 +1036,21 @@ def generate_basic_summary(slide_text, slide_num):
         str: A simple summary of the slide content
     """
     print(f"Generating basic summary locally for slide {slide_num}")
-    
-    # Clean up the text
     text = slide_text.strip()
-    
-    # Check if this mentions OCR unavailability
-    ocr_unavailable = "[This slide appears to be primarily visual with limited text. OCR is not available" in text
-    
-    # Special handling for slides that need OCR but it's not available
-    if ocr_unavailable:
-        return f"**Visual Content** - This slide appears to primarily contain visual elements (images, charts, or diagrams). Limited text was detected as OCR functionality is not available in this environment. The visual elements likely illustrate important concepts from the presentation."
-    
-    # Create a very simple summary for other slides
+
     if len(text) < 100:
-        # For very short text, return it directly
         return f"Slide {slide_num} contains: {text}"
-    
-    # For longer text, extract key sentences
-    sentences = text.replace('\n', ' ').split('.')
-    sentences = [s.strip() for s in sentences if s.strip()]
-    
-    # Take first, middle and last sentence if available
-    summary_sentences = []
-    if sentences:
-        summary_sentences.append(sentences[0])  # First sentence
-        
-        if len(sentences) > 2:
-            middle_idx = len(sentences) // 2
-            summary_sentences.append(sentences[middle_idx])  # Middle sentence
-            
-        if len(sentences) > 1:
-            summary_sentences.append(sentences[-1])  # Last sentence
-    
-    # Join the selected sentences
-    if summary_sentences:
-        summary = ". ".join(summary_sentences) + "."
-        return summary
-    else:
+
+    sentences = [s.strip() for s in text.replace('\n', ' ').split('.') if s.strip()]
+    if not sentences:
         return f"Slide {slide_num} contains text that could not be summarized: {text[:100]}..."
+
+    picks = [sentences[0]]
+    if len(sentences) > 2:
+        picks.append(sentences[len(sentences) // 2])
+    if len(sentences) > 1:
+        picks.append(sentences[-1])
+    return ". ".join(picks) + "."
 
 # Function to extract title from slide text
 def extract_slide_title(slide_text, slide_num):
@@ -1034,141 +1088,52 @@ def extract_slide_title(slide_text, slide_num):
     # If we didn't find a good title, return the default
     return default_title
 
-# Function to generate a summary locally when API fails
-def generate_local_summary(slide_text, slide_num):
-    """Generate a simple local summary when API is unavailable"""
-    if is_title_slide(slide_text):
-        return "**Title Slide** - This appears to be a title slide."
-        
-    words = slide_text.split()
-    
-    # Check if this slide contains OCR-extracted text
-    has_ocr = "[OCR-extracted text:]" in slide_text
-    
-    # Check for image metadata we added in extract_text_from_pdf
-    has_image_metadata = "[This slide appears to be primarily visual" in slide_text or "[Contains a visual element of size" in slide_text
-    has_embedded_images = "[Contains" in slide_text and "embedded image(s)" in slide_text
-    
-    # If we have OCR text, create a summary focused on that
-    if has_ocr:
-        # Extract the OCR text section
-        ocr_parts = slide_text.split("[OCR-extracted text:]")
-        if len(ocr_parts) > 1:
-            ocr_text = ocr_parts[1].strip()
-            original_text = ocr_parts[0].strip()
-            
-            # Prepare a combined summary
-            if len(original_text.split()) > 5:
-                # If there was meaningful original text too
-                return f"**Visual Slide with Text** - This slide contains both regular text and text extracted from images via OCR. Key content includes: **{' '.join(original_text.split()[:15])}... {' '.join(ocr_text.split()[:15])}...**"
-            else:
-                # If original text was minimal
-                return f"**Visual Slide with OCR** - Text extracted from image content: **{' '.join(ocr_text.split()[:30])}...**"
-    
-    # Check if slide has minimal text but likely contains images
-    if len(words) <= 10 or has_image_metadata:
-        # For slides with very little text or known image content
-        if has_image_metadata or has_embedded_images:
-            # Extract image dimensions from our metadata
-            image_info = ""
-            dim_match = re.search(r'Contains a visual element of size (\d+)x(\d+)px', slide_text)
-            if not dim_match:
-                dim_match = re.search(r'Contains an image of size (\d+)x(\d+)px', slide_text)
-            
-            if dim_match:
-                width, height = dim_match.groups()
-                image_info = f" The image dimensions are {width}x{height} pixels."
-            
-            # Extract embedded image count if available    
-            image_count = ""
-            count_match = re.search(r'Contains (\d+) embedded image\(s\)', slide_text)
-            if count_match:
-                count = count_match.group(1)
-                image_count = f" The slide contains {count} embedded image(s)."
-            
-            # Create enhanced summary for visual slides
-            visible_text = []
-            for w in words[:20]:
-                if not w.startswith('[') and not w.startswith('Slide') and not w == ']':
-                    visible_text.append(w)
-            
-            text_sample = ' '.join(visible_text).strip()
-            if text_sample:
-                return f"**Visual Slide with Text Elements** - This slide contains visual content with some text elements.{image_info}{image_count} The key text includes: **{text_sample}**"
-            else:
-                return f"**Visual Content** - This slide appears to contain primarily visual elements such as images, diagrams, charts, or graphs.{image_info}{image_count} The visual elements likely illustrate important concepts from the presentation."
-        else:
-            # For slides with just minimal text
-            return f"**Slide with Minimal Text** - This slide contains {len(words)} words and may focus on key points or contain visual elements. Text includes: **{' '.join(words)}**"
-            
-    # For slides with substantial text content
-    if len(words) <= 30:
-        # Short text slide - include all content
-        return f"**Concise Content Slide** - This slide presents key information in {len(words)} words: **{' '.join(words)}**"
-    else:
-        # Extract key sentences from longer text
-        sentences = re.split(r'[.!?]+', slide_text)
-        filtered_sentences = []
-        
-        # Process each sentence to extract meaningful ones
-        for sentence in sentences:
-            sentence = sentence.strip()
-            # Skip short or meaningless sentences
-            if len(sentence.split()) > 3 and not sentence.startswith('[') and not sentence.startswith('Slide'):
-                filtered_sentences.append(sentence)
-                if len(filtered_sentences) >= 3:  # Limit to ~3 key sentences
-                    break
-        
-        # Create a summary based on key sentences
-        if filtered_sentences:
-            key_points = '. '.join(filtered_sentences)
-            return f"**Content Slide** - Key points: **{key_points}**."
-        else:
-            # Fallback if sentence extraction fails
-            word_sample = ' '.join(words[:30])
-            return f"**Content Slide** - This slide contains {len(words)} words. Beginning with: **{word_sample}...**"
+def get_slide_content(session_id, slide_num, wait_if_pending=True, max_wait_seconds=20.0):
+    """Get the transcribed content of a specific slide.
 
-def get_slide_content(session_id, slide_num):
-    """
-    Get the content of a specific slide for direct reference
-    
-    Args:
-        session_id (str): The session ID
-        slide_num (int or str): The slide number
-        
-    Returns:
-        tuple: (slide_text, exists) where exists is a boolean indicating if the slide exists
+    If the slide is a valid index but its transcription hasn't landed yet, this
+    briefly waits for the background pipeline rather than returning False (which
+    would make chat incorrectly tell the user the slide doesn't exist).
+
+    Returns (slide_text, exists) — `exists` reflects whether the slide is a
+    valid position in the deck, not whether text is available right now.
     """
     try:
-        # Convert slide_num to string for consistent lookup
         str_slide_num = str(slide_num)
-        
-        # Get slide data
         slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
         if not slide_data:
             print(f"No data found for session {session_id}")
             return "", False
-            
-        # Get slide texts
+
         extraction_data = slide_data.get('extraction_data', {})
         if not extraction_data:
-            print(f"No extraction data found for session {session_id}")
             return "", False
-            
+
         slide_texts = extraction_data.get('slide_texts', {})
         if not slide_texts:
-            print(f"No slide texts found for session {session_id}")
             return "", False
-            
-        # Check if the slide exists
-        if str_slide_num in slide_texts:
-            return slide_texts[str_slide_num], True
-        else:
-            # Get total slide count for error messaging
+
+        if str_slide_num not in slide_texts:
             total_slides = len(slide_texts)
             print(f"Slide {slide_num} not found. Available slides: 1-{total_slides}")
             return "", False
-            
+
+        text = slide_texts.get(str_slide_num, "")
+        if text.strip() or not wait_if_pending:
+            return text, True
+
+        # Slide exists but transcription is still in flight — poll briefly.
+        print(f"Chat waiting on transcription of slide {slide_num}")
+        for event in wait_for_slide_ready(session_id, slide_num,
+                                          max_wait_seconds=max_wait_seconds):
+            if event.get("ready"):
+                return slide_texts.get(str_slide_num, ""), True
+            if "progress" in event:
+                continue
+            # Not ready, not progress -> failure/timeout/no_session.
+            return "", True   # slide EXISTS (valid index), just no text yet.
+        return slide_texts.get(str_slide_num, ""), True
+
     except Exception as e:
         print(f"Error retrieving slide {slide_num}: {str(e)}")
         return "", False
@@ -1207,19 +1172,21 @@ HOW TO ANSWER
         if slide_query_match:
             specific_slide = int(slide_query_match.group(1))
             print(f"Detected request for specific slide: {specific_slide}")
-            
-            # Get the specific slide content
+
             slide_content, slide_exists = get_slide_content(session_id, specific_slide)
-            
-            if slide_exists:
-                # Prioritize the specific slide
+
+            if slide_exists and slide_content.strip():
                 context_message = f"The user is asking about Slide {specific_slide}. Here is the content of that slide:\n\n{slide_content}"
                 messages.append({"role": "system", "content": context_message})
-                
-                # Set current_slide to ensure we bias RAG towards this slide
                 current_slide = specific_slide
+            elif slide_exists and not slide_content.strip():
+                # Slide is a valid position but transcription hasn't completed.
+                # Return early — no point invoking the LLM for content we don't have.
+                return (
+                    f"Slide {specific_slide} is still being processed. Please wait a moment "
+                    f"for transcription to finish, then ask again — it should only take a few seconds."
+                )
             else:
-                # Slide doesn't exist, but we'll still try RAG for related content
                 messages.append({"role": "system", "content": f"The user asked about Slide {specific_slide}, but this slide doesn't appear to exist in the current presentation."})
         
         # Get RAG context for the user question
@@ -1610,37 +1577,39 @@ def get_summaries():
         if 'slide_summaries' not in slide_data:
             slide_data['slide_summaries'] = {}
             
-        # Collect slides that actually need processing
+        # Classify slides into: pending (not yet transcribed), cached, or to-generate.
         slides_to_process = []
         valid_slide_nums = []
-        
+        pending_slides = []
+
         for slide_num in slide_nums:
             str_slide_num = str(slide_num)
-            # Check if the slide exists
             if str_slide_num not in slide_texts:
-                print(f"Slide {slide_num} (key={str_slide_num}) not found in slide_texts. Available keys: {list(slide_texts.keys())}")
+                print(f"Slide {slide_num} not in slide_texts; available: {list(slide_texts.keys())[:10]}...")
                 continue
-                
-            # Skip empty slides
+
             slide_text = slide_texts.get(str_slide_num, "")
             if not slide_text.strip():
-                print(f"Slide {slide_num} is empty, skipping")
+                # Transcription hasn't landed yet — surface this to the client so
+                # the UI can keep polling /processing_status instead of showing
+                # "Basic Summary" placeholders forever.
+                pending_slides.append(slide_num)
                 continue
-                
-            # Check if we need to process this slide
+
             if force_regenerate or str_slide_num not in slide_data['slide_summaries']:
                 slides_to_process.append(slide_num)
-            
             valid_slide_nums.append(slide_num)
             
-        # If we don't need to process any slides, return cached results
+        # If we don't need to process any slides, return cached results + pending markers.
         if not slides_to_process:
             result = {}
             for slide_num in valid_slide_nums:
                 str_slide_num = str(slide_num)
                 if str_slide_num in slide_data['slide_summaries']:
                     result[slide_num] = slide_data['slide_summaries'][str_slide_num]
-            print(f"Returning cached summaries for {len(result)} slides")
+            if pending_slides:
+                result['_pending'] = pending_slides
+            print(f"Returning cached summaries for {len(result)} slides, pending={pending_slides}")
             return jsonify(result)
             
         # Process slides that need summarization
@@ -1657,57 +1626,43 @@ def get_summaries():
                 print(f"Error generating presentation overview: {str(e)}")
                 # Continue without overview
                 
-        # Process each slide
+        # Process each slide with adjacent-slide context so cross-slide
+        # references match what the background pipeline produces.
         results = {}
-        
+        total_slides_count = len(slide_texts)
+
         for slide_num in valid_slide_nums:
             str_slide_num = str(slide_num)
-            
-            # Use cached summary if available and not forcing regeneration
+
             if str_slide_num in slide_data['slide_summaries'] and not force_regenerate:
                 results[slide_num] = slide_data['slide_summaries'][str_slide_num]
                 continue
-                
-            # Skip if slide doesn't exist in text data
             if str_slide_num not in slide_texts:
                 continue
-                
-            # Get the slide text
+
             slide_text = slide_texts.get(str_slide_num, "")
             if not slide_text.strip():
                 continue
-                
-            # Get surrounding slides for context
-            surrounding_slides = {}
-            nearby_slides = [slide_num - 1, slide_num + 1]
-            for nearby_num in nearby_slides:
-                if str(nearby_num) in slide_texts:
-                    neighboring_text = slide_texts[str(nearby_num)]
-                    # Limit context size
-                    if len(neighboring_text) > 300:
-                        words = neighboring_text.split()
-                        neighboring_text = " ".join(words[:30]) + "..."
-                    surrounding_slides[nearby_num] = neighboring_text
-            
+
+            neighbor_context = build_neighbor_context_from_texts(slide_texts, slide_num)
             try:
-                # Generate summary without streaming for batch efficiency
                 summary = generate_groq_summary(
                     slide_text=slide_text,
                     slide_num=slide_num,
-                    streaming=False
+                    streaming=False,
+                    neighbor_context=neighbor_context,
+                    total_slides=total_slides_count,
                 )
-                
-                # Store the summary
                 slide_data['slide_summaries'][str_slide_num] = summary
                 results[slide_num] = summary
-                
             except Exception as e:
                 print(f"Error generating summary for slide {slide_num}: {str(e)}")
-                # Use basic fallback summary
                 basic_summary = generate_basic_summary(slide_text, slide_num)
                 slide_data['slide_summaries'][str_slide_num] = basic_summary
                 results[slide_num] = basic_summary
-                
+
+        if pending_slides:
+            results['_pending'] = pending_slides
         return jsonify(results)
         
     except Exception as e:
@@ -2042,46 +1997,75 @@ def generate(session_id, slide_num, force_regenerate=False):
         yield json.dumps({"error": f"Slide {slide_num} not found"})
         return
     
-    # Get the slide text
+    # Get the slide text. If the background vision pipeline hasn't transcribed
+    # this slide yet, wait for it — yielding progress events so the client can
+    # display "Transcribing slide N..." instead of a generic error.
     slide_text = slide_texts.get(str_slide_num, "")
     if not slide_text.strip():
-        print(f"Slide {slide_num} is empty")
-        yield json.dumps({"error": f"Slide {slide_num} is empty"})
-        return
-    
+        print(f"Slide {slide_num} not transcribed yet; waiting for pipeline")
+        waited = False
+        for event in wait_for_slide_ready(session_id, slide_num):
+            if "progress" in event:
+                waited = True
+                yield json.dumps(event)
+                continue
+            if event.get("ready"):
+                slide_text = slide_texts.get(str_slide_num, "")
+                break
+            # Not ready and we're done waiting.
+            reason = event.get("reason", "unknown")
+            if reason == "failed":
+                detail = event.get("error") or "transcription failed"
+                yield json.dumps({
+                    "error": f"Slide {slide_num} could not be transcribed ({detail}). "
+                             "Try regenerating — it may succeed on another attempt."
+                })
+            elif reason == "timeout":
+                yield json.dumps({
+                    "error": f"Slide {slide_num} is still being processed. Give it a few more seconds and try again."
+                })
+            else:
+                yield json.dumps({"error": f"Slide {slide_num} is not available yet."})
+            return
+
+        if not slide_text.strip():
+            yield json.dumps({"error": f"Slide {slide_num} is empty after transcription."})
+            return
+        if waited:
+            # Refresh the client — transcription finished, summary generation starting.
+            yield json.dumps({"progress": f"Generating summary for slide {slide_num}..."})
+
     # Initialize slide_summaries if not present
     if 'slide_summaries' not in slide_data:
         slide_data['slide_summaries'] = {}
-    
+
     # Check if we already have the summary cached and force_regenerate is False
     if str_slide_num in slide_data['slide_summaries'] and not force_regenerate:
         cached_summary = slide_data['slide_summaries'][str_slide_num]
         print(f"Using cached summary for slide {slide_num}")
-        
-        # First yield the title
         title = extract_slide_title(slide_text, slide_num)
         yield json.dumps({"title": title})
-        
-        # Then yield the summary
         yield json.dumps({"summary": cached_summary})
         yield json.dumps({"complete": True})
         return
-    
-    # Yield progress update
+
     yield json.dumps({"progress": "Generating summary..."})
-    
-    # Use a simplified approach - just generate the summary directly
-    # Extract title from the slide text
     title = extract_slide_title(slide_text, slide_num)
     yield json.dumps({"title": title})
-    
+
+    # Build adjacent-slide context so interactive summaries carry the same
+    # cross-slide referencing the batch pipeline produces.
+    neighbor_context = build_neighbor_context_from_texts(slide_texts, slide_num)
+    total_slides_count = len(slide_texts)
+
     try:
         print(f"Generating summary for slide {slide_num}")
-        # Try to generate summary with streaming first
         completion_stream = generate_groq_summary(
             slide_text=slide_text,
             slide_num=slide_num,
-            streaming=True
+            streaming=True,
+            neighbor_context=neighbor_context,
+            total_slides=total_slides_count,
         )
         
         # Process the streaming response
@@ -2105,7 +2089,9 @@ def generate(session_id, slide_num, force_regenerate=False):
             complete_summary = generate_groq_summary(
                 slide_text=slide_text,
                 slide_num=slide_num,
-                streaming=False
+                streaming=False,
+                neighbor_context=neighbor_context,
+                total_slides=total_slides_count,
             )
             
             # Store and yield the non-streaming result
