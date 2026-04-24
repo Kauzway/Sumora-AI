@@ -915,11 +915,19 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
                                     print(f"Streaming timed out after {timeout_seconds} seconds")
                                     yield "<<<TIMEOUT_ERROR>>>"
                                     break
-                                    
-                                if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                                    content = chunk.choices[0].delta.content
-                                    if content:
-                                        yield content
+
+                                # NVIDIA NIM emits a terminal chunk with empty `choices`
+                                # carrying only usage data — skip it instead of indexing.
+                                if not getattr(chunk, "choices", None):
+                                    continue
+
+                                choice = chunk.choices[0]
+                                delta = getattr(choice, "delta", None)
+                                if delta is None:
+                                    continue
+                                content = getattr(delta, "content", None) or getattr(delta, "reasoning_content", None)
+                                if content:
+                                    yield content
                         except Exception as stream_error:
                             print(f"Error during streaming: {stream_error}")
                             yield f"Error: {str(stream_error)}"
@@ -945,7 +953,8 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
                         timeout=8.0  # Set an explicit timeout for the API call
                     )
                     
-                    summary = response.choices[0].message.content
+                    message = response.choices[0].message
+                    summary = getattr(message, "content", None) or getattr(message, "reasoning_content", "")
                     print(f"Received non-streaming summary: {summary[:50]}...")
                     return summary
                 except Exception as api_error:
@@ -1304,8 +1313,13 @@ For code-related questions:
                 
                 # Extract content from the response with safer access
                 if hasattr(completion, 'choices') and completion.choices and completion.choices[0] and hasattr(completion.choices[0], 'message'):
-                    content = completion.choices[0].message.content
-                    
+                    message = completion.choices[0].message
+                    content = getattr(message, "content", None)
+                    # NVIDIA NIM reasoning-style models place the answer in
+                    # reasoning_content when content is empty; fall back to it.
+                    if not content or content.isspace():
+                        content = getattr(message, "reasoning_content", None)
+
                     if content and not content.isspace():
                         print("Chat response generated successfully")
                         
@@ -2296,7 +2310,8 @@ Format:
                 
                 # Get overview content
                 if hasattr(response, 'choices') and response.choices and hasattr(response.choices[0], 'message'):
-                    overview = response.choices[0].message.content
+                    message = response.choices[0].message
+                    overview = getattr(message, "content", None) or getattr(message, "reasoning_content", "")
                     
                     # Ensure we start with a heading or bullet
                     if not overview.startswith('#') and not overview.startswith('*') and not overview.startswith('-'):

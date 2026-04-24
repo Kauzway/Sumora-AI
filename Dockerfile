@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.6
 
 # ---------- Builder stage ----------
-# Compile wheels for all Python deps here so the final image doesn't need
-# build-essential / swig / python3-dev. torch is pinned to the CPU wheel index
-# to avoid pulling the ~750 MB CUDA build that we can't use on Cloud Run anyway.
+# Build every wheel here so the final image carries no compilers. Torch is
+# pinned to the pure-CPU index; otherwise pip pulls the ~800 MB CUDA wheel
+# from PyPI (which is what was bloating the previous image).
 FROM python:3.11-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
@@ -20,12 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /wheels
 COPY requirements.txt .
 
-# CPU-only torch from the dedicated index is ~200 MB instead of ~800 MB.
-RUN pip install --upgrade pip && \
+# Strip torch out of requirements so the subsequent wheel pass can't resolve
+# it against PyPI's CUDA build — we want the CPU wheel only.
+RUN grep -v -i '^torch' requirements.txt > requirements-no-torch.txt && \
+    pip install --upgrade pip && \
     pip wheel --wheel-dir /wheels \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        torch && \
-    pip wheel --wheel-dir /wheels -r requirements.txt && \
+        --index-url https://download.pytorch.org/whl/cpu \
+        "torch>=1.9.0" && \
+    pip wheel --wheel-dir /wheels -r requirements-no-torch.txt && \
     pip wheel --wheel-dir /wheels gunicorn pytesseract
 
 # ---------- Runtime stage ----------
@@ -39,8 +41,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/usr/bin:${PATH}" \
     TESSDATA_PREFIX="/usr/share/tesseract-ocr/5/tessdata"
 
-# Runtime system deps only — no compilers, no dev headers, no git.
-# Tesseract script-latn / osd packages were dropped; the app only uses English.
+# Runtime-only system deps — no compilers, no dev headers, no git.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
@@ -50,14 +51,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install the pre-built wheels from the builder stage.
 COPY --from=builder /wheels /wheels
 COPY requirements.txt .
-RUN pip install --no-index --find-links=/wheels \
-        -r requirements.txt gunicorn pytesseract torch && \
-    rm -rf /wheels /root/.cache
+RUN grep -v -i '^torch' requirements.txt > requirements-no-torch.txt && \
+    pip install --no-index --find-links=/wheels "torch>=1.9.0" && \
+    pip install --no-index --find-links=/wheels \
+        -r requirements-no-torch.txt gunicorn pytesseract && \
+    rm -rf /wheels /root/.cache requirements-no-torch.txt && \
+    find /usr/local/lib/python3.11 -type d -name '__pycache__' -prune -exec rm -rf {} + && \
+    find /usr/local/lib/python3.11 -type d -name 'tests' -prune -exec rm -rf {} +
 
-# Copy application code last so source changes don't bust the deps layer.
+# Copy application code last so source edits don't bust the deps layer.
 COPY . .
 
 RUN chmod +x /app/entrypoint.sh && \
