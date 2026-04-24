@@ -29,11 +29,14 @@ RUN pip install --upgrade pip && \
     pip install --index-url https://download.pytorch.org/whl/cpu "torch>=1.9.0" && \
     pip install -r requirements.txt gunicorn
 
-# Pre-download the sentence-transformers embedding model at build time. This
-# bakes it into the image so the running container never hits HuggingFace at
-# first-use (which was throwing 429 in production). ~90 MB on disk.
-RUN python -c "from sentence_transformers import SentenceTransformer; \
-SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/opt/hf-cache')"
+# Pre-download the sentence-transformers embedding model at build time so the
+# running container never hits HuggingFace at first-use (which was throwing 429
+# in production). Qwen3-Embedding-0.6B is ~1.2 GB — it's worth baking in.
+# Override via EMBEDDING_MODEL build-arg if swapping to a lighter model.
+ARG EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+ENV EMBEDDING_MODEL=${EMBEDDING_MODEL}
+RUN python -c "import os; from sentence_transformers import SentenceTransformer; \
+SentenceTransformer(os.environ['EMBEDDING_MODEL'], cache_folder='/opt/hf-cache')"
 
 # Trim the fat before copying site-packages forward: no __pycache__, no test
 # suites, no .pyc. Saves tens of MB.
@@ -47,7 +50,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PRODUCTION=true \
     HF_HOME=/opt/hf-cache \
-    SENTENCE_TRANSFORMERS_HOME=/opt/hf-cache
+    SENTENCE_TRANSFORMERS_HOME=/opt/hf-cache \
+    EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B \
+    EMBEDDING_DIMENSION=1024
 # Note: NOT setting HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE so that the occasional
 # metadata check can still fall back to the network — the actual model weights
 # are already on disk from the builder stage, so no full download ever runs.

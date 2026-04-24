@@ -424,9 +424,19 @@ def vision_transcribe_slide(img_path, slide_num, timeout=90.0):
     return text
 
 # RAG Model Configuration
-# Using all-MiniLM-L6-v2 as a lightweight, quantizable embedding model that works well for RAG
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-EMBEDDING_DIMENSION = 384  # Dimension for all-MiniLM-L6-v2
+# Qwen3-Embedding-0.6B: state-of-the-art 600M-parameter multilingual embedding
+# model (top of MTEB as of its release). 1024-d embeddings, instruction-aware
+# query encoding. Public on HuggingFace under Apache-2.0 — no HF_TOKEN required,
+# though one will be honored via HF_TOKEN env var if present. Override via
+# EMBEDDING_MODEL env var if the operator wants to swap back to MiniLM.
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+EMBEDDING_DIMENSION = int(os.environ.get("EMBEDDING_DIMENSION", "1024"))
+# Instruction prefix applied only to QUERIES (not documents) — this is how
+# Qwen3-Embedding is designed to be used for retrieval, per its model card.
+QWEN3_QUERY_INSTRUCTION = (
+    "Given a user question about a presentation deck, retrieve the slide passages "
+    "that most directly answer it."
+)
 embedding_model = None
 use_half_precision = True  # Set to True to use FP16 precision (saves memory)
 
@@ -440,32 +450,34 @@ chunk_to_slide_map = {}
 def load_embedding_model():
     """Load the embedding model once and keep it in memory"""
     global embedding_model
-    
+
     if embedding_model is None:
         print(f"Loading embedding model: {EMBEDDING_MODEL}")
         try:
-            # Explicit cache_folder so the model is loaded from the baked-in
-            # /opt/hf-cache shipped in the Docker image. Avoids HuggingFace
-            # rate-limit HTTP 429s on first use in production.
             cache_folder = os.environ.get("SENTENCE_TRANSFORMERS_HOME") \
                 or os.environ.get("HF_HOME")
-            embedding_model = SentenceTransformer(
-                EMBEDDING_MODEL,
-                cache_folder=cache_folder,
-            )
-            if use_half_precision and torch.cuda.is_available():
-                embedding_model.half()  # Convert to FP16
-                print("Using half precision (FP16) for embedding model")
-            elif torch.cuda.is_available():
-                print("Using GPU for embedding model")
-                embedding_model.to('cuda')
+            kwargs = {"cache_folder": cache_folder}
+            # HF_TOKEN is optional — Qwen3-Embedding is public, but honoring
+            # the token keeps the code working for any gated-model swap.
+            hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            if hf_token:
+                kwargs["use_auth_token"] = hf_token
+            embedding_model = SentenceTransformer(EMBEDDING_MODEL, **kwargs)
+
+            if torch.cuda.is_available():
+                if use_half_precision:
+                    embedding_model.half()
+                    print("Using half precision (FP16) for embedding model on GPU")
+                else:
+                    embedding_model.to('cuda')
+                    print("Using GPU for embedding model")
             else:
                 print("Using CPU for embedding model")
-                
+
         except Exception as e:
             print(f"Error loading embedding model: {str(e)}")
             return False
-            
+
     return True
 
 def chunk_text(text: str, chunk_size: int = 150, overlap: int = 30) -> List[str]:
@@ -557,78 +569,107 @@ def create_slide_embeddings(session_id: str, slide_texts: Dict[str, str]):
     slide_chunks[session_id] = all_chunks
     chunk_to_slide_map[session_id] = slide_map
     
-    # Now create embeddings and build the FAISS index
-    print(f"Generating embeddings for {len(all_chunks)} chunks in batches of 50")
-    
-    # Process in batches to avoid memory issues
-    batch_size = 50
+    # Now create embeddings and build the FAISS index.
+    # We use IndexFlatIP (inner product) over L2-normalized vectors so that
+    # search scores are true cosine similarities in [-1, 1]. The previous
+    # implementation used IndexFlatL2 but compared scores against 0.6 as if
+    # they were cosine similarity — which silently threw away the *closest*
+    # matches. This was a real RAG-quality bug.
+    print(f"Generating embeddings for {len(all_chunks)} chunks in batches of 32")
+    batch_size = 32
     all_embeddings = []
-    
+
     for i in range(0, len(all_chunks), batch_size):
         end_idx = min(i + batch_size, len(all_chunks))
         batch = all_chunks[i:end_idx]
         print(f"Processing batch {i//batch_size + 1}/{(len(all_chunks)-1)//batch_size + 1}")
-        
-        # Generate embeddings for this batch
         try:
             with torch.no_grad():
-                batch_embeddings = embedding_model.encode(batch)
-            all_embeddings.extend(batch_embeddings)
+                batch_embeddings = embedding_model.encode(
+                    batch,
+                    batch_size=batch_size,
+                    normalize_embeddings=True,  # unit vectors -> IP == cosine
+                    convert_to_numpy=True,
+                    show_progress_bar=False,
+                )
+            all_embeddings.append(batch_embeddings)
         except Exception as e:
             print(f"Error generating embeddings for batch: {str(e)}")
             continue
-    
-    # Create FAISS index
+
+    if not all_embeddings:
+        print("No embeddings generated, aborting index build")
+        return False
+
     try:
-        dimension = len(all_embeddings[0])
-        index = faiss.IndexFlatL2(dimension)
-        index.add(np.array(all_embeddings).astype('float32'))
-        
-        # Store the index
+        embedding_matrix = np.vstack(all_embeddings).astype('float32')
+        # Defensive re-normalize in case the model ignored normalize_embeddings.
+        faiss.normalize_L2(embedding_matrix)
+        dimension = embedding_matrix.shape[1]
+        index = faiss.IndexFlatIP(dimension)
+        index.add(embedding_matrix)
         faiss_indices[session_id] = index
-        
-        print(f"Successfully created embeddings and FAISS index for session {session_id}")
+        print(f"Successfully created embeddings and FAISS index "
+              f"({len(all_chunks)} chunks, dim={dimension}) for session {session_id}")
         return True
     except Exception as e:
         print(f"Error creating FAISS index: {str(e)}")
         return False
 
-def retrieve_relevant_chunks(session_id: str, query: str, top_k: int = 3) -> List[Tuple[str, int, float]]:
-    """Retrieve most relevant chunks for a query using vector similarity search"""
+MIN_COSINE_SIMILARITY = 0.25  # below this the match is semantic noise
+
+def retrieve_relevant_chunks(session_id: str, query: str, top_k: int = 5) -> List[Tuple[str, int, float]]:
+    """Retrieve most relevant chunks for a query using cosine similarity
+    (IndexFlatIP over L2-normalized embeddings). Scores are in [-1, 1]."""
     if session_id not in faiss_indices or not load_embedding_model():
         print(f"No embeddings found for session {session_id} or model loading failed")
         return []
-        
+
     try:
-        # Generate embedding for the query
-        query_embedding = embedding_model.encode([query], convert_to_numpy=True)
-        
-        # Normalize for cosine similarity
+        # Qwen3-Embedding expects queries prefixed with a task instruction when
+        # used for retrieval. sentence-transformers supports this via the
+        # `prompt` kwarg; older models just ignore it.
+        encode_kwargs = {
+            "convert_to_numpy": True,
+            "normalize_embeddings": True,
+        }
+        if "qwen3-embedding" in EMBEDDING_MODEL.lower():
+            encode_kwargs["prompt"] = (
+                f"Instruct: {QWEN3_QUERY_INSTRUCTION}\nQuery: "
+            )
+        try:
+            query_embedding = embedding_model.encode([query], **encode_kwargs)
+        except TypeError:
+            # Older sentence-transformers doesn't know the `prompt` kwarg.
+            encode_kwargs.pop("prompt", None)
+            query_embedding = embedding_model.encode([query], **encode_kwargs)
+
+        query_embedding = np.asarray(query_embedding, dtype='float32')
         faiss.normalize_L2(query_embedding)
-        
-        # Search the index
+
         index = faiss_indices[session_id]
-        scores, indices = index.search(query_embedding, top_k)
-        
-        # Get the corresponding chunks and slide numbers
+        # Over-fetch then threshold, to survive cases where a good match sits
+        # just outside top_k.
+        search_k = max(top_k, 8)
+        scores, indices = index.search(query_embedding, search_k)
+
         results = []
         for score, idx in zip(scores[0], indices[0]):
-            # Ensure idx is an integer
             idx = int(idx)
-            if idx >= 0 and idx < len(slide_chunks[session_id]):
-                chunk = slide_chunks[session_id][idx]
-                # Ensure consistent integer key usage for slide number lookup
-                slide_num = chunk_to_slide_map[session_id].get(idx)
-                # Convert slide_num to int if it exists
-                if slide_num is not None:
-                    slide_num = int(slide_num)
-                    
-                # Add to results only if score is above minimum threshold
-                if float(score) > 0.6:  # Increased threshold for higher relevance
-                    results.append((chunk, slide_num, float(score)))
-                
+            if idx < 0 or idx >= len(slide_chunks[session_id]):
+                continue
+            if float(score) < MIN_COSINE_SIMILARITY:
+                continue
+            chunk = slide_chunks[session_id][idx]
+            slide_num = chunk_to_slide_map[session_id].get(idx)
+            if slide_num is not None:
+                slide_num = int(slide_num)
+            results.append((chunk, slide_num, float(score)))
+            if len(results) >= top_k:
+                break
+
         return results
-        
+
     except Exception as e:
         print(f"Error retrieving chunks: {e}")
         return []
@@ -692,7 +733,7 @@ def get_context_for_query(session_id: str, query: str, current_slide: Optional[i
     current_context_size = 0
     
     for chunk, slide_num, score in chunks:
-        if score < 0.6:  # Increased threshold for relevance
+        if score < MIN_COSINE_SIMILARITY:
             continue
             
         # Calculate the size of this chunk
@@ -930,14 +971,19 @@ SUMMARY_SYSTEM_PROMPT = (
     "Never start with 'This slide', 'The slide', 'In this slide', or similar filler.\n"
     "2. Two to three short bullet points with the specific facts, numbers, mechanisms, "
     "or steps that support the thesis. Prefer concrete values over paraphrase.\n"
-    "3. OPTIONAL final line, only when there is a substantive, evident link — "
-    "\"Connects to: Slide N (<one-clause reason>).\" "
-    "Include it only if the named slide directly defines, extends, contradicts, "
-    "or is continued by this one. Never invent a link. Omit entirely otherwise.\n\n"
+    "3. (Rare) A single final line \"Connects to: Slide N (<one-clause reason>)\" — ONLY "
+    "if the slide itself EXPLICITLY cites that other slide by number, continues a "
+    "procedure/formula/figure introduced there, or is the direct counterpart (e.g. "
+    "'problem → solution' or 'definition → example') named in the transcription. "
+    "If you are even slightly unsure, OMIT the line entirely. Do not reference adjacent "
+    "slides just because they exist, share a topic, or appear before/after. "
+    "Default behavior: omit this line.\n\n"
     "HARD RULES:\n"
     "- Do not invent information that isn't in the transcription.\n"
+    "- Do not invent cross-slide relationships — silence is better than a weak link.\n"
     "- Total length 60–90 words.\n"
-    "- Use bold only for the thesis and at most three key terms."
+    "- Use bold only for the thesis and at most three key terms.\n"
+    "- Render math in LaTeX using $...$ or $$...$$ so the frontend can typeset it."
 )
 
 def generate_groq_summary(slide_text, slide_num, streaming=True,
@@ -961,16 +1007,13 @@ def generate_groq_summary(slide_text, slide_num, streaming=True,
     # per-call `timeout=` on the OpenAI client is the right knob.
     client_local = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
 
-    context_block = ""
-    if neighbor_context:
-        context_block = (
-            "Context from adjacent slides (for optional cross-reference only — "
-            "do not summarize these):\n" + neighbor_context + "\n\n"
-        )
+    # We deliberately do NOT pass neighbor_context into the prompt anymore.
+    # It made the model hallucinate "Connects to: Slide N" clauses even when
+    # the slide itself had no real link to its neighbors. Cross-slide context
+    # is still available through the chat RAG path when the user asks for it.
     total_hint = f"Deck size: {total_slides} slides. " if total_slides else ""
     user_message = (
         f"{total_hint}Produce the summary for Slide {slide_num}.\n\n"
-        f"{context_block}"
         f"Slide {slide_num} transcription:\n{slide_text}"
     )
     messages = [
@@ -1163,26 +1206,30 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
         if not session_id:
             session_id = active_session_id
         
-        # Create messages list for the chat
-        messages = [
-            {"role": "system", "content": """You are a presentation analyst helping the user deeply understand a specific deck. The retrieved slide content in subsequent system messages is your ONLY source of truth — never invent facts that aren't there.
+        # NVIDIA NIM requires exactly one system message, at the start of the
+        # messages list. We assemble all our context (base instructions +
+        # specific-slide content + RAG context) into that single system message
+        # and then send the user's question as the sole user message.
+        base_instructions = (
+            "You are a presentation analyst helping the user deeply understand a specific deck. "
+            "The slide content provided below is your ONLY source of truth — never invent facts that aren't there.\n\n"
+            "HOW TO ANSWER\n"
+            "1. Give only the direct answer. No \"let me think\", \"looking at the slides\", \"based on the content\" preambles. No meta-commentary about your process.\n"
+            "2. When the answer draws from more than one slide, cite each inline as \"(Slide N)\" at the end of the relevant sentence. Only add a clause about how the slides relate when the relationship is concrete (same metric, direct continuation, explicit contradiction) — never invent one.\n"
+            "3. If the user asks about a slide that doesn't exist, say so clearly, then point to the closest related slides.\n"
+            "4. Match the length of your answer to the question: short question -> short answer, complex question -> structured answer with bullets.\n"
+            "5. Prefer concrete specifics (numbers, names, mechanisms) from the slides over vague summaries.\n"
+            "6. For code or technical content, explain the purpose, key components, and interactions — using actual snippets or values from the slides when present.\n"
+            "7. Render math in LaTeX using $...$ or $$...$$ so the frontend can typeset it."
+        )
 
-HOW TO ANSWER
-1. Give only the direct answer. No "let me think", "looking at the slides", "based on the content" preambles. No meta-commentary about your process.
-2. When the answer draws from more than one slide, cite each inline as "(Slide N)" at the end of the relevant sentence, and add ONE short clause explaining how the slides relate to each other. Example: "Revenue model charges a flat ₹50 per booking (Slide 6), which builds on the pricing principles introduced earlier (Slide 3)."
-3. When a concept from one slide is clarified, defined, extended, or contradicted by another, say so explicitly. Example: "Slide 4 introduces the metric; Slide 7 shows how it's computed."
-4. If the user asks about a slide that doesn't exist, say so clearly, then point to the closest related slides.
-5. Match the length of your answer to the question: short question -> short answer, complex question -> structured answer with bullets.
-6. Prefer concrete specifics (numbers, names, mechanisms) from the slides over vague summaries.
-7. For code or technical content, explain the purpose, key components, and interactions — using actual snippets or values from the slides when present."""}
-        ]
-        
         # Handle slide-specific queries
         slide_query_match = re.search(r'(?:explain|show|tell me about|what is in|describe|summarize|content of)\s+slide\s+(\d+)(?:\s+|$|\?)', user_message.lower())
         specific_slide = None
         slide_content = ""
         slide_exists = False
-        
+        context_blocks = []
+
         if slide_query_match:
             specific_slide = int(slide_query_match.group(1))
             print(f"Detected request for specific slide: {specific_slide}")
@@ -1190,8 +1237,9 @@ HOW TO ANSWER
             slide_content, slide_exists = get_slide_content(session_id, specific_slide)
 
             if slide_exists and slide_content.strip():
-                context_message = f"The user is asking about Slide {specific_slide}. Here is the content of that slide:\n\n{slide_content}"
-                messages.append({"role": "system", "content": context_message})
+                context_blocks.append(
+                    f"The user is asking about Slide {specific_slide}. Here is the content of that slide:\n\n{slide_content}"
+                )
                 current_slide = specific_slide
             elif slide_exists and not slide_content.strip():
                 # Slide is a valid position but transcription hasn't completed.
@@ -1201,22 +1249,28 @@ HOW TO ANSWER
                     f"for transcription to finish, then ask again — it should only take a few seconds."
                 )
             else:
-                messages.append({"role": "system", "content": f"The user asked about Slide {specific_slide}, but this slide doesn't appear to exist in the current presentation."})
-        
+                context_blocks.append(
+                    f"The user asked about Slide {specific_slide}, but this slide doesn't appear to exist in the current presentation."
+                )
+
         # Get RAG context for the user question
         context = ""
         relevant_slides = []
-        
+
         if session_id and session_id in faiss_indices:
             context, relevant_slides = get_context_for_query(session_id, user_message, current_slide)
-            
+
         if context and not (specific_slide and slide_exists):
-            # Only add RAG context if we didn't already add the specific slide content
-            context_message = f"Here is the relevant content from the presentation:\n\n{context}"
-            messages.append({"role": "system", "content": context_message})
-        
-        # Add user message with stronger instruction to prevent thinking process
-        messages.append({"role": "user", "content": user_message + "\n\nCRITICAL: Provide ONLY the direct answer with NO explanation of your thought process. Do not mention how you arrived at the answer."})
+            context_blocks.append(f"Relevant content retrieved from the presentation:\n\n{context}")
+
+        system_content = base_instructions
+        if context_blocks:
+            system_content += "\n\n---\n" + "\n\n---\n".join(context_blocks)
+
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_message + "\n\nAnswer directly, no meta-commentary on your reasoning."},
+        ]
         
         # Get the API key directly
         api_key = os.environ.get("NVIDIA_API_KEY", "")
@@ -2270,10 +2324,10 @@ def _run_summary_batch(session_id, slide_nums):
         text = structured.get(str(n), "")
         if not text.strip():
             raise RuntimeError("empty transcription (transcription must succeed first)")
-        neighbors = _collect_neighbor_context(structured, n, total)
+        # Neighbor context intentionally omitted — see generate_groq_summary.
         return generate_groq_summary(
             slide_text=text, slide_num=n, streaming=False,
-            neighbor_context=neighbors, total_slides=total,
+            neighbor_context="", total_slides=total,
         )
 
     with ThreadPoolExecutor(max_workers=min(len(slide_nums), PROCESSING_BATCH_SIZE)) as pool:
@@ -2334,9 +2388,29 @@ def process_session_background(session_id):
         _set_overall_state(session_id, "failed")
         return
 
-    # --- Phase 1: transcription ---
+    # --- Phase 1+2 (interleaved): transcribe a batch, then immediately
+    # summarize that batch in the background so the first 5 summaries land
+    # within ~30-60s instead of after every slide has been transcribed.
     _set_overall_state(session_id, "transcribing")
     failed_transcribe = []
+    summary_threads = []
+
+    def _kick_summary_batch(batch):
+        """Mark slides as 'processing' for summary and run the summary batch
+        on a worker thread so it overlaps with the next transcription batch."""
+        structured_now = slide_contents_structured.get(session_id, {})
+        ready = [n for n in batch if (structured_now.get(str(n)) or "").strip()]
+        if not ready:
+            return None
+        for n in ready:
+            _update_slide_state(session_id, n, summary="processing")
+        t = threading.Thread(
+            target=lambda nums=ready: _run_summary_batch(session_id, nums),
+            daemon=True,
+        )
+        t.start()
+        return t
+
     for batch in _chunked(range(1, total + 1), PROCESSING_BATCH_SIZE):
         for n in batch:
             _update_slide_state(session_id, n, transcription="processing")
@@ -2346,6 +2420,17 @@ def process_session_background(session_id):
             create_slide_embeddings(session_id, slide_contents_structured.get(session_id, {}))
         except Exception as re_err:
             print(f"[{session_id[:8]}] incremental RAG reindex failed: {re_err}")
+        # Fire-and-forget summary generation for the slides that transcribed
+        # successfully in this batch. Rest of the pipeline continues
+        # transcribing the next batch in parallel.
+        t = _kick_summary_batch(batch)
+        if t:
+            summary_threads.append(t)
+        # Flip overall to "summarizing" as soon as the first summary batch
+        # has been kicked off, so the UI banner stops saying "transcribing"
+        # once the user can actually read something.
+        if any(th.is_alive() for th in summary_threads):
+            _set_overall_state(session_id, "summarizing")
         time.sleep(PROCESSING_BATCH_DELAY_SECONDS)
 
     # --- Phase 1.5: retry failed transcriptions ---
@@ -2355,8 +2440,6 @@ def process_session_background(session_id):
         retry_round += 1
         _set_overall_state(session_id, "retrying")
         print(f"[{session_id[:8]}] transcription retry round {retry_round}: {pending}")
-        # Breathing room between retry rounds so transient NIM 5xx / rate
-        # limits have a chance to clear before we hammer the same slides.
         time.sleep(RETRY_BACKOFF_SECONDS)
         next_pending = []
         for group in _chunked(pending, RETRY_BATCH_SIZE):
@@ -2369,23 +2452,42 @@ def process_session_background(session_id):
                 create_slide_embeddings(session_id, slide_contents_structured.get(session_id, {}))
             except Exception as re_err:
                 print(f"[{session_id[:8]}] retry RAG reindex failed: {re_err}")
+            # Summarize any slides that were recovered in this retry group.
+            t = _kick_summary_batch(group)
+            if t:
+                summary_threads.append(t)
             time.sleep(PROCESSING_BATCH_DELAY_SECONDS)
         pending = next_pending
 
-    # --- Phase 2: summarization ---
+    # --- Wait for all in-flight summary batches to finish ---
     _set_overall_state(session_id, "summarizing")
-    # Only summarize slides that have transcriptions.
+    for t in summary_threads:
+        t.join()
+
+    # Catch any slides whose transcription finished but whose summary batch
+    # was never kicked off (e.g. recovered in the last retry group edge case).
     structured = slide_contents_structured.get(session_id, {})
-    summarizable = [n for n in range(1, total + 1) if (structured.get(str(n)) or "").strip()]
-    failed_summary = []
-    for batch in _chunked(summarizable, PROCESSING_BATCH_SIZE):
-        for n in batch:
-            _update_slide_state(session_id, n, summary="processing")
-        fails = _run_summary_batch(session_id, batch)
-        failed_summary.extend(fails)
-        time.sleep(PROCESSING_BATCH_DELAY_SECONDS)
+    existing_summaries = app.config.get('SLIDE_DATA', {}).get(session_id, {}).get('slide_summaries', {})
+    missed = [
+        n for n in range(1, total + 1)
+        if (structured.get(str(n)) or "").strip()
+        and not (existing_summaries.get(str(n)) or "").strip()
+    ]
+    if missed:
+        print(f"[{session_id[:8]}] summarizing missed slides: {missed}")
+        for batch in _chunked(missed, PROCESSING_BATCH_SIZE):
+            for n in batch:
+                _update_slide_state(session_id, n, summary="processing")
+            _run_summary_batch(session_id, batch)
+            time.sleep(PROCESSING_BATCH_DELAY_SECONDS)
 
     # --- Phase 2.5: retry failed summaries ---
+    failed_summary = []
+    with status_lock:
+        sess = slide_status.get(session_id, {})
+        for n_str, s in sess.get("slides", {}).items():
+            if s.get("summary") == "failed" and (structured.get(n_str) or "").strip():
+                failed_summary.append(int(n_str))
     retry_round = 0
     pending = list(failed_summary)
     while pending and retry_round < MAX_RETRIES_PER_SLIDE:

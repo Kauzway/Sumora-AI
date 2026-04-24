@@ -948,7 +948,8 @@ function streamSummary(slideNumber, forceRegenerate = false) {
                 
                 // Show the partial summary
                 slideSummary.innerHTML = renderMarkdown(summaryText);
-                
+                typesetMathIn(slideSummary);
+
                 // Update the slide data with the partial summary
                 const slideIndex = slideData.findIndex(s => s.slideNumber === slideNumber);
                 if (slideIndex !== -1) {
@@ -1441,47 +1442,33 @@ function displayChatResponse(response, isStreaming = false) {
 function displaySummary(summary, slideTitle, slideNumber) {
     const summaryContainer = document.getElementById('slide-summary');
     if (!summaryContainer) return;
-    
-    // Update title and slide number
+
     document.getElementById('slide-title').textContent = slideTitle || `Slide ${slideNumber}`;
-    
-    // Update summary content with markdown rendering
     summaryContainer.innerHTML = renderMarkdown(summary);
-    
-    // Show the summary section
+    typesetMathIn(summaryContainer);
     document.getElementById('summary-section').style.display = 'block';
 }
 
 // Handle displaySummaryWithStreaming to render markdown properly
 function displaySummaryWithStreaming(summary, elementOrTitle, slideNumberOrNothing) {
-    // Check if this is the old function signature (with elementToUpdate) or the new one (with title and slide number)
     if (typeof elementOrTitle === 'string' || typeof slideNumberOrNothing === 'number') {
-        // This is the new function signature - title and slide number
         const summaryContainer = document.getElementById('slide-summary');
         if (!summaryContainer) return;
-        
-        // Display the title immediately if provided
+
         if (typeof elementOrTitle === 'string') {
             document.getElementById('slide-title').textContent = elementOrTitle;
         }
-        
-        // Clear any existing content
-        summaryContainer.innerHTML = '';
-        
-        // Render the formatted content directly
+
         summaryContainer.innerHTML = renderMarkdown(summary);
+        typesetMathIn(summaryContainer);
     } else {
-        // This is the old function signature with elementToUpdate
         const elementToUpdate = elementOrTitle;
-        
-        // Clear any previous timers
         const timerId = elementToUpdate.dataset.timerId;
         if (timerId) {
             clearInterval(parseInt(timerId));
         }
-        
-        // Simply update the element with formatted content
         elementToUpdate.innerHTML = renderMarkdown(summary);
+        typesetMathIn(elementToUpdate);
     }
 }
 
