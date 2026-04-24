@@ -15,7 +15,6 @@ pydantic
 scikit-learn
 gunicorn>=20.1.0
 httpx>=0.24.0
-pytesseract>=0.3.8 
 authlib>=1.2.0
 flask-login>=0.6.0
 itsdangerous>=2.0.0

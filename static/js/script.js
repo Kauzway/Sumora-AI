@@ -82,15 +82,14 @@ uploadForm.addEventListener('submit', function(e) {
         return;
     }
     
-    // Check file type - only accept PDF files
+    // Accept PDF, PPTX, and PPT. Everything else is server-rejected anyway.
     const fileType = file.name.split('.').pop().toLowerCase();
-    if (fileType !== 'pdf') {
-        showUploadStatus('Only PDF files are supported.', 'alert-danger');
+    if (!['pdf', 'pptx', 'ppt'].includes(fileType)) {
+        showUploadStatus('Only PDF or PPTX/PPT files are supported.', 'alert-danger');
         return;
     }
-    
-    // Show loading status
-    showUploadStatus('Uploading and processing your slides...', 'alert-info');
+
+    showUploadProgress(0, 'Uploading…');
     
     // Create form data for file upload
     const formData = new FormData();
@@ -111,25 +110,21 @@ uploadForm.addEventListener('submit', function(e) {
                 
                 // Store session ID
                 sessionId = response.session_id;
-                
-                // Show success message
-                showUploadStatus('Slides processed successfully!', 'alert-success');
-                
-                // Show results section and hide upload section IMMEDIATELY
+
+                showUploadStatus('Upload complete — slides are being processed.', 'alert-success');
+
+                // Transition to results view immediately; the processing status
+                // poller drives the progressive UI reveal.
                 uploadSection.style.display = 'none';
                 resultsSection.style.display = 'block';
-                
-                // Create placeholder slides immediately for a faster UI experience
-                createInitialPlaceholders(response.total_images || 10);
-                
-                // Load slides UI immediately (sets up navigation and event listeners)
+
+                const knownTotal = response.total_slides || response.total_images || 10;
+                createInitialPlaceholders(knownTotal);
                 initSlideViewerUI();
-                
-                // Then fetch slide data (images first, then summaries) in the background
-                fetchSlideImages()
-                  .then(() => fetchSlideSummaries());
-                
-                // Focus on input field
+
+                fetchSlideImages().then(() => fetchSlideSummaries());
+                startProcessingStatusPoll();
+
                 userInput.focus();
             } catch (error) {
                 console.error("Error parsing response:", error);
@@ -160,8 +155,10 @@ uploadForm.addEventListener('submit', function(e) {
     xhr.upload.onprogress = function(event) {
         if (event.lengthComputable) {
             const percentComplete = (event.loaded / event.total) * 100;
-            console.log(`Upload progress: ${percentComplete.toFixed(2)}%`);
-            showUploadStatus(`Uploading: ${percentComplete.toFixed(0)}%`, 'alert-info');
+            const label = percentComplete < 100
+                ? `Uploading ${percentComplete.toFixed(0)}%…`
+                : 'Upload complete — server is rendering slides…';
+            showUploadProgress(percentComplete, label);
         }
     };
     
@@ -433,6 +430,122 @@ function showUploadStatus(message, alertClass) {
     uploadStatus.style.display = 'block';
 }
 
+// Richer upload-progress display: a labeled progress bar instead of a flat
+// alert. Falls back to showUploadStatus text if the bar elements aren't present.
+function showUploadProgress(percent, label) {
+    let bar = document.getElementById('upload-progress-bar');
+    if (!bar) {
+        uploadStatus.innerHTML = `
+            <div class="upload-progress-label" id="upload-progress-label"></div>
+            <div class="upload-progress-track">
+              <div class="upload-progress-fill" id="upload-progress-bar"></div>
+            </div>`;
+        uploadStatus.className = 'upload-progress-wrap mt-4 text-center';
+        uploadStatus.style.display = 'block';
+        bar = document.getElementById('upload-progress-bar');
+    }
+    const labelEl = document.getElementById('upload-progress-label');
+    if (labelEl) labelEl.textContent = label;
+    if (bar) bar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+}
+
+// ---------- Per-slide processing status ----------
+// Poll /processing_status/<session_id> and reflect transcription/summary state
+// on each thumbnail so the user can see which slides are still cooking.
+let processingStatusTimer = null;
+let processingBanner = null;
+
+function ensureProcessingBanner() {
+    if (processingBanner) return processingBanner;
+    processingBanner = document.createElement('div');
+    processingBanner.id = 'processing-banner';
+    processingBanner.className = 'processing-banner';
+    const anchor = document.querySelector('.app-header .header-content');
+    (anchor || document.body).appendChild(processingBanner);
+    return processingBanner;
+}
+
+function applySlideStatus(slideNum, state) {
+    // state: { transcription, summary, retries, error }
+    const container = document.getElementById('slide-thumbnails');
+    if (!container) return;
+    const tile = container.querySelector(`[data-slide-num="${slideNum}"]`);
+    if (!tile) return;
+
+    tile.classList.remove(
+        'state-pending', 'state-processing', 'state-done',
+        'state-failed', 'state-retrying'
+    );
+    let stateClass = 'state-pending';
+    if (state.transcription === 'failed' || state.summary === 'failed') {
+        stateClass = (state.retries || 0) > 0 ? 'state-retrying' : 'state-failed';
+    } else if (state.summary === 'done') {
+        stateClass = 'state-done';
+    } else if (state.summary === 'processing' || state.transcription === 'processing') {
+        stateClass = 'state-processing';
+    } else if (state.transcription === 'done') {
+        stateClass = 'state-processing'; // transcribed, waiting on summary
+    }
+    tile.classList.add(stateClass);
+
+    // Refresh hover tooltip so users can debug stuck slides.
+    tile.title = `Slide ${slideNum} — transcription: ${state.transcription}, summary: ${state.summary}`
+        + (state.error ? `\n${state.error}` : '');
+}
+
+function renderProcessingBanner(overall, counts) {
+    const banner = ensureProcessingBanner();
+    const { total, tDone, sDone, failed } = counts;
+    let label;
+    switch (overall) {
+        case 'uploading':     label = 'Uploading and rendering slides…'; break;
+        case 'transcribing':  label = `Transcribing slides (${tDone}/${total})…`; break;
+        case 'summarizing':   label = `Writing summaries (${sDone}/${total})…`; break;
+        case 'retrying':      label = `Retrying ${failed} slide${failed === 1 ? '' : 's'}…`; break;
+        case 'complete':      label = 'All slides processed.'; break;
+        case 'partial':       label = `Finished with ${failed} slide${failed === 1 ? '' : 's'} still failing.`; break;
+        case 'failed':        label = 'Processing failed.'; break;
+        default:              label = 'Preparing…';
+    }
+    banner.textContent = label;
+    banner.dataset.state = overall || 'unknown';
+    banner.style.display = (overall === 'complete') ? 'none' : 'block';
+}
+
+function startProcessingStatusPoll() {
+    if (processingStatusTimer) {
+        clearInterval(processingStatusTimer);
+    }
+    const poll = async () => {
+        if (!sessionId) return;
+        try {
+            const r = await fetch(`/processing_status/${sessionId}`);
+            if (!r.ok) return;
+            const data = await r.json();
+            const slides = data.slides || {};
+            let tDone = 0, sDone = 0, failed = 0;
+            Object.entries(slides).forEach(([num, state]) => {
+                applySlideStatus(num, state);
+                if (state.transcription === 'done') tDone += 1;
+                if (state.summary === 'done') sDone += 1;
+                if (state.transcription === 'failed' || state.summary === 'failed') failed += 1;
+            });
+            renderProcessingBanner(data.overall, {
+                total: data.total_slides || Object.keys(slides).length,
+                tDone, sDone, failed,
+            });
+            if (['complete', 'partial', 'failed'].includes(data.overall)) {
+                clearInterval(processingStatusTimer);
+                processingStatusTimer = null;
+            }
+        } catch (e) {
+            console.warn('status poll failed', e);
+        }
+    };
+    poll();
+    processingStatusTimer = setInterval(poll, 2500);
+}
+
 // Back to upload button
 backToUploadBtn.addEventListener('click', function() {
     resultsSection.style.display = 'none';
@@ -533,8 +646,9 @@ function createThumbnails() {
     
     slideData.forEach((slide, index) => {
         const thumbnail = document.createElement('div');
-        thumbnail.className = 'thumbnail';
+        thumbnail.className = 'thumbnail state-pending';
         thumbnail.dataset.index = index;
+        thumbnail.dataset.slideNum = slide.slideNumber;
         
         if (slide.imagePath) {
             const img = document.createElement('img');

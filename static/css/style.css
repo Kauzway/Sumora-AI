@@ -593,3 +593,144 @@ body.dark-mode .mode-toggle:hover {
 .badge-total {
     background-color: var(--secondary-color);
 }
+
+/* ======================================================================
+   Upload / processing state animations — added for the vision pipeline.
+   Thumbnails pulse while their slide is being transcribed/summarized,
+   fade in when done, and show a red ring on failure.
+   ====================================================================== */
+
+.upload-progress-wrap {
+    width: 100%;
+    max-width: 420px;
+    margin: 1.25rem auto 0;
+}
+.upload-progress-label {
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+    color: var(--light-text-secondary, #666);
+}
+.upload-progress-track {
+    width: 100%;
+    height: 8px;
+    background: rgba(0, 0, 0, 0.08);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.upload-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #45818e, #e1c1a5);
+    border-radius: 999px;
+    transition: width 180ms ease-out;
+}
+body.dark-mode .upload-progress-track {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.processing-banner {
+    display: none;
+    padding: 0.4rem 0.9rem;
+    margin: 0 1rem;
+    border-radius: 999px;
+    background: rgba(69, 129, 142, 0.12);
+    color: var(--primary-color, #45818e);
+    font-size: 0.85rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 320px;
+}
+.processing-banner[data-state="retrying"] {
+    background: rgba(240, 173, 78, 0.18);
+    color: #8a5b14;
+}
+.processing-banner[data-state="failed"] {
+    background: rgba(217, 83, 79, 0.16);
+    color: #9c2a27;
+}
+body.dark-mode .processing-banner {
+    background: rgba(225, 193, 165, 0.14);
+    color: #e1c1a5;
+}
+
+/* Per-thumbnail states. The base .thumbnail styles are defined elsewhere;
+   these just layer on visual state indicators. */
+.thumbnail {
+    position: relative;
+    transition: opacity 200ms ease, box-shadow 200ms ease;
+}
+.thumbnail.state-pending,
+.thumbnail.state-processing,
+.thumbnail.state-retrying {
+    opacity: 0.55;
+}
+.thumbnail.state-done {
+    opacity: 1;
+}
+.thumbnail.state-failed {
+    opacity: 0.85;
+    box-shadow: 0 0 0 2px rgba(217, 83, 79, 0.75) inset;
+}
+
+/* Shimmer overlay while transcribing/summarizing. */
+.thumbnail.state-processing::after,
+.thumbnail.state-retrying::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(
+        110deg,
+        rgba(255, 255, 255, 0.0) 20%,
+        rgba(255, 255, 255, 0.35) 45%,
+        rgba(255, 255, 255, 0.0) 70%
+    );
+    background-size: 220% 100%;
+    animation: thumb-shimmer 1.6s linear infinite;
+}
+body.dark-mode .thumbnail.state-processing::after,
+body.dark-mode .thumbnail.state-retrying::after {
+    background: linear-gradient(
+        110deg,
+        rgba(255, 255, 255, 0.0) 20%,
+        rgba(255, 255, 255, 0.12) 45%,
+        rgba(255, 255, 255, 0.0) 70%
+    );
+    background-size: 220% 100%;
+}
+
+.thumbnail.state-retrying::before {
+    content: "↻";
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    font-size: 0.85rem;
+    color: #8a5b14;
+    background: rgba(255, 255, 255, 0.85);
+    border-radius: 999px;
+    padding: 0 5px;
+}
+.thumbnail.state-failed::before {
+    content: "!";
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    font-weight: 700;
+    color: #fff;
+    background: #d9534f;
+    border-radius: 999px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+}
+
+@keyframes thumb-shimmer {
+    0%   { background-position: 220% 0; }
+    100% { background-position: -20% 0; }
+}

@@ -11,7 +11,13 @@ When deploying to Google Cloud Run, the following environment variables need to 
 | `SECRET_KEY` | Secret key for Flask sessions (should be a random string) | Yes |
 | `APP_BASE_URL` | Base URL of your application (e.g., https://your-app-name.run.app) | Yes |
 | `PRODUCTION` | Set to "true" to enable production settings | Yes |
-| `NVIDIA_API_KEY` | API key for NVIDIA NIM (https://build.nvidia.com/) used for AI inference | Yes |
+| `NVIDIA_API_KEY` | API key for NVIDIA NIM (https://build.nvidia.com/) used for AI inference and slide vision transcription | Yes |
+
+### Supported upload formats
+
+PDF and PPTX (and .ppt). PPTX files are converted to PDF via LibreOffice
+headless inside the container, then slides are rendered to images and
+transcribed by the NVIDIA NIM vision model.
 
 ### Steps to obtain Google OAuth credentials:
 

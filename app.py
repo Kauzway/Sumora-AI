@@ -6,13 +6,15 @@ from werkzeug.utils import secure_filename
 import uuid
 import time
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import tempfile
 import base64
 from io import BytesIO
 from PIL import Image, ImageDraw
-import pytesseract  # For OCR on slide images
 import requests
 import json
+import shutil
+import subprocess  # For LibreOffice headless PPTX -> PDF conversion
 import re
 from openai import OpenAI
 
@@ -36,98 +38,13 @@ from shutil import which
 from authlib.integrations.flask_client import OAuth
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
-# Configure Tesseract path for OCR
-# For Windows, you need to set the Tesseract executable path
-if platform.system() == 'Windows':
-    # Default path for Tesseract on Windows
-    tesseract_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-    
-    # Try to find tesseract.exe in PATH
-    tesseract_in_path = which('tesseract')
-    if tesseract_in_path:
-        tesseract_path = tesseract_in_path
-        
-    pytesseract.pytesseract.tesseract_cmd = tesseract_path
-    print(f"Set Tesseract path to: {tesseract_path}")
+# OCR is gone — NVIDIA NIM vision models transcribe slide images directly.
+# LibreOffice (soffice) handles PPTX/PPT/ODP -> PDF conversion at runtime.
+soffice_path = which('soffice') or which('libreoffice')
+if soffice_path:
+    print(f"Found LibreOffice at: {soffice_path}")
 else:
-    # On Linux (Cloud Run) and MacOS, we assume Tesseract is in the PATH
-    # Need to set the path explicitly to make sure pytesseract finds it
-    tesseract_in_path = which('tesseract')
-    if tesseract_in_path:
-        print(f"Found Tesseract at: {tesseract_in_path}")
-        pytesseract.pytesseract.tesseract_cmd = tesseract_in_path
-    else:
-        print("Tesseract not found in PATH")
-    
-    # Get current TESSDATA_PREFIX from environment variables
-    current_tessdata_prefix = os.environ.get('TESSDATA_PREFIX')
-    print(f"Current TESSDATA_PREFIX from environment: {current_tessdata_prefix}")
-    
-    # For any platform, verify that TESSDATA_PREFIX points to a valid directory
-    # with eng.traineddata file
-    if current_tessdata_prefix and os.path.isdir(current_tessdata_prefix):
-        eng_traineddata_path = os.path.join(current_tessdata_prefix, 'eng.traineddata')
-        if not os.path.isfile(eng_traineddata_path):
-            print(f"Warning: eng.traineddata not found at {eng_traineddata_path}")
-            
-            # Try to find eng.traineddata anywhere in the system
-            import subprocess
-            try:
-                find_output = subprocess.check_output(['find', '/usr', '-name', 'eng.traineddata'], text=True)
-                paths = find_output.strip().split('\n')
-                if paths and paths[0]:
-                    tessdata_dir = os.path.dirname(paths[0])
-                    os.environ['TESSDATA_PREFIX'] = tessdata_dir
-                    print(f"Found eng.traineddata, set TESSDATA_PREFIX to {tessdata_dir}")
-            except Exception as e:
-                print(f"Error searching for eng.traineddata: {str(e)}")
-    
-    print(f"Final TESSDATA_PREFIX: {os.environ.get('TESSDATA_PREFIX')}")
-
-# Check if tesseract is available
-tesseract_available = False
-try:
-    # Test if tesseract is working by doing a simple OCR on a small image
-    from PIL import Image
-    test_img = Image.new('RGB', (50, 10), color = (255, 255, 255))
-    
-    # First get version info
-    try:
-        tesseract_version = pytesseract.get_tesseract_version()
-        print(f"Detected Tesseract version: {tesseract_version}")
-        
-        # For Tesseract 5.x, ensure we're using the right TESSDATA_PREFIX
-        if tesseract_version >= 5:
-            print("Tesseract 5.x detected, ensuring correct TESSDATA_PREFIX")
-            
-            # Try to detect correct path
-            import subprocess
-            try:
-                # Try to get info about where tessdata is expected
-                lang_output = subprocess.check_output(['tesseract', '--list-langs'], stderr=subprocess.STDOUT, text=True)
-                print(f"Tesseract language info: {lang_output}")
-                
-                # Extract path from output if possible
-                import re
-                path_match = re.search(r'tessdata directory: ([^\s]+)', lang_output)
-                if path_match:
-                    tessdata_dir = path_match.group(1)
-                    print(f"Detected tessdata directory from tesseract output: {tessdata_dir}")
-                    os.environ['TESSDATA_PREFIX'] = tessdata_dir
-            except Exception as e:
-                print(f"Error getting tessdata info: {str(e)}")
-                
-    except Exception as ve:
-        print(f"Could not get Tesseract version: {str(ve)}")
-    
-    # Now try actual OCR
-    ocr_result = pytesseract.image_to_string(test_img)
-    tesseract_available = True
-    print("✅ Tesseract OCR is working properly")
-    print(f"Sample OCR result: '{ocr_result}'")
-except Exception as e:
-    print(f"⚠️ Tesseract OCR is not available: {str(e)}")
-    print("Text extraction from images will be limited. Will fall back to OCR-less mode.")
+    print("⚠️ LibreOffice not found in PATH — PPTX uploads will be rejected until it is installed.")
 
 # Define TimeoutError if it doesn't exist (for Python <3.3 compatibility)
 try:
@@ -266,8 +183,16 @@ if groq_api_key:
 # Model configuration - use NVIDIA-hosted Gemma model
 groq_model = "google/gemma-4-31b-it"  # The NVIDIA NIM model name
 
-# Variable to track if Groq API is available
+# Variable to track if NVIDIA NIM is available (keeping the legacy name to
+# avoid touching every call site — it's just a module-local flag now).
 groq_available = True
+
+# Vision + batching configuration for the NVIDIA NIM pipeline.
+VISION_MODEL = "google/gemma-4-31b-it"  # Same NIM endpoint; it handles text+image messages.
+PROCESSING_BATCH_SIZE = 5                # Slides processed per batch (stays under 40 RPM).
+PROCESSING_BATCH_DELAY_SECONDS = 8.0     # Pause between batches — keeps worst-case under 40 RPM.
+RETRY_BATCH_SIZE = 5                     # Retries are capped at 5 slides per group.
+MAX_RETRIES_PER_SLIDE = 2                # Each failed slide gets up to 2 retries.
 
 # Global dictionaries for storage
 slide_contents = {}  # Store slide content by session ID
@@ -276,6 +201,141 @@ slide_images = {}  # Store image paths by session ID
 session_images = {}  # Store image paths for each session
 chat_sessions = {}  # Store chat history by session ID
 summary_cache = {}  # Cache for summaries to avoid redundant API calls
+
+# Per-session, per-slide processing state. Shape:
+#   slide_status[session_id] = {
+#       "overall": "uploading"|"transcribing"|"summarizing"|"retrying"|"complete"|"failed",
+#       "total_slides": int,
+#       "slides": {
+#           "1": {"transcription": "pending"|"done"|"failed",
+#                 "summary":       "pending"|"done"|"failed",
+#                 "retries": int,
+#                 "error": str|None},
+#           ...
+#       }
+#   }
+# The frontend polls /processing_status/<session_id> and animates thumbnails
+# off this dict. It is a plain Python dict guarded by status_lock.
+slide_status = {}
+status_lock = threading.Lock()
+
+def _init_session_status(session_id, total_slides):
+    with status_lock:
+        slide_status[session_id] = {
+            "overall": "uploading",
+            "total_slides": total_slides,
+            "slides": {
+                str(n): {"transcription": "pending", "summary": "pending",
+                         "retries": 0, "error": None}
+                for n in range(1, total_slides + 1)
+            },
+        }
+
+def _update_slide_state(session_id, slide_num, **fields):
+    with status_lock:
+        sess = slide_status.get(session_id)
+        if not sess:
+            return
+        slot = sess["slides"].get(str(slide_num))
+        if slot is None:
+            return
+        slot.update(fields)
+
+def _set_overall_state(session_id, overall):
+    with status_lock:
+        sess = slide_status.get(session_id)
+        if sess:
+            sess["overall"] = overall
+
+
+# ---------- PPTX -> PDF conversion ----------
+
+SUPPORTED_UPLOAD_EXTENSIONS = {".pdf", ".pptx", ".ppt"}
+
+def convert_to_pdf_if_needed(source_path, work_dir):
+    """If source is PPTX/PPT, convert to PDF via headless LibreOffice and return
+    the new path. If it's already a PDF, return it unchanged. Raises on failure."""
+    ext = os.path.splitext(source_path)[1].lower()
+    if ext == ".pdf":
+        return source_path
+    if ext not in SUPPORTED_UPLOAD_EXTENSIONS:
+        raise ValueError(f"Unsupported file type: {ext}")
+
+    soffice = which("soffice") or which("libreoffice")
+    if not soffice:
+        raise RuntimeError(
+            "LibreOffice (soffice) is not installed — cannot convert PPTX/PPT. "
+            "Install libreoffice-impress in the container."
+        )
+
+    os.makedirs(work_dir, exist_ok=True)
+    print(f"Converting {source_path} -> PDF via {soffice}")
+    result = subprocess.run(
+        [soffice, "--headless", "--norestore", "--nologo", "--nofirststartwizard",
+         "--convert-to", "pdf", "--outdir", work_dir, source_path],
+        capture_output=True, text=True, timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"LibreOffice conversion failed: {result.stderr or result.stdout}")
+
+    base = os.path.splitext(os.path.basename(source_path))[0]
+    pdf_path = os.path.join(work_dir, f"{base}.pdf")
+    if not os.path.isfile(pdf_path):
+        raise RuntimeError(f"LibreOffice reported success but no PDF at {pdf_path}")
+    return pdf_path
+
+
+# ---------- Vision transcription ----------
+
+def _encode_image_data_url(img_path):
+    with open(img_path, "rb") as f:
+        return "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
+
+VISION_TRANSCRIBE_SYSTEM = (
+    "You convert presentation slide images into faithful text transcriptions "
+    "used for downstream retrieval and summarization."
+)
+
+VISION_TRANSCRIBE_USER = (
+    "Transcribe this slide image into plain text.\n"
+    "Rules:\n"
+    "1. Copy all visible text verbatim, preserving hierarchy (title, subtitle, bullets, sub-bullets, captions).\n"
+    "2. For charts, diagrams, tables, or images, describe them factually in one short paragraph: "
+    "what is being shown, the axes/columns/labels, the relationships, and any concrete values.\n"
+    "3. Do NOT add commentary, interpretation, or 'this slide shows'. Output only the transcription.\n"
+    "4. If the slide is almost blank (e.g. a divider), output a single short descriptive line."
+)
+
+def vision_transcribe_slide(img_path, slide_num, timeout=30.0):
+    """Transcribe a slide image via NVIDIA NIM vision. Returns transcription string.
+    Raises on failure — the caller decides whether to retry."""
+    api_key = os.environ.get("NVIDIA_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("NVIDIA_API_KEY not set")
+
+    vision_client = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
+    data_url = _encode_image_data_url(img_path)
+
+    completion = vision_client.chat.completions.create(
+        model=VISION_MODEL,
+        messages=[
+            {"role": "system", "content": VISION_TRANSCRIBE_SYSTEM},
+            {"role": "user", "content": [
+                {"type": "text", "text": VISION_TRANSCRIBE_USER},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]},
+        ],
+        temperature=0.1,
+        max_tokens=1200,
+        timeout=timeout,
+    )
+
+    message = completion.choices[0].message
+    text = getattr(message, "content", None) or getattr(message, "reasoning_content", "")
+    text = (text or "").strip()
+    if not text:
+        raise RuntimeError(f"Empty transcription for slide {slide_num}")
+    return text
 
 # RAG Model Configuration
 # Using all-MiniLM-L6-v2 as a lightweight, quantizable embedding model that works well for RAG
@@ -692,95 +752,41 @@ def load_user(user_id):
 active_session_id = None
 
 def extract_text_from_pdf(pdf_path, session_id):
-    """Extract text from PDF and create a structured dataset for the session"""
-    try:
-        document = fitz.open(pdf_path)
-        print(f"Opened PDF: {pdf_path} with {len(document)} pages")
-        
-        text_content = ""
-        slide_images = []
-        structured_slides = {}  # Dictionary to store structured slide text by slide number
-        
-        # For tracking the session's slide images
-        if session_id not in session_images:
-            session_images[session_id] = []
-        
-        for i, page in enumerate(document):
-            slide_num = i + 1  # 1-indexed slide numbers
-            str_slide_num = str(slide_num)  # Convert to string for consistent dictionary keys
-            
-            # Extract text from this page
-            page_text = page.get_text()
-            
-            # Render page to image for display and OCR
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better quality
-            img_data = pix.tobytes("png")
-            
-            # Save image to temp file
-            img_path = tempfile.mktemp(suffix='.png', prefix=f'{session_id}_slide{slide_num}_')
-            with open(img_path, 'wb') as img_file:
-                img_file.write(img_data)
-            
-            # Record image path
-            slide_images.append(img_path)
-            session_images[session_id].append(img_path)
-            
-            # Check if the page has minimal text content and might be mostly image-based
-            has_minimal_text = len(page_text.strip().split()) < 15
-            
-            if has_minimal_text and tesseract_available:
-                print(f"Slide {slide_num} has minimal text, attempting OCR...")
-                try:
-                    # Open the image with PIL for OCR
-                    with Image.open(img_path) as img:
-                        # Extract text using OCR
-                        ocr_text = pytesseract.image_to_string(img)
-                        
-                        if ocr_text and len(ocr_text.strip()) > 0:
-                            # Combine OCR text with any existing text
-                            combined_text = page_text.strip() + "\n\n[OCR-extracted text:]\n" + ocr_text
-                            
-                            # Add to the combined text
-                            text_content += f"Slide {slide_num}:\n{combined_text}\n\n"
-                            
-                            # Store in structured dictionary
-                            structured_slides[str_slide_num] = combined_text
-                            
-                            print(f"Successfully extracted OCR text from slide {slide_num}")
-                            continue  # Skip the regular text addition below
-                        else:
-                            print(f"OCR didn't extract any text from slide {slide_num}")
-                except Exception as ocr_err:
-                    print(f"Error during OCR processing for slide {slide_num}: {str(ocr_err)}")
-            elif has_minimal_text and not tesseract_available:
-                # If OCR isn't available but the slide has minimal text, add a note
-                print(f"Slide {slide_num} has minimal text, but OCR is not available (running on Cloud Run)")
-                # Add metadata to indicate this might be an image-heavy slide
-                page_text += "\n\n[This slide appears to be primarily visual with limited text. OCR is not available to extract text from images.]"
-            
-            # For slides where OCR wasn't performed or failed, use the regular text
-            # Add to the combined text
-            text_content += f"Slide {slide_num}:\n{page_text}\n\n"
-            
-            # Store in structured dictionary for RAG processing - use string keys consistently
-            structured_slides[str_slide_num] = page_text  # Use string keys for slide numbers
-            
-        document.close()
-        
-        # Store the raw text content
-        slide_contents[session_id] = text_content
-        
-        # Store structured slide content (separate dictionary for each slide)
-        slide_contents_structured[session_id] = structured_slides
-        
-        # Create embeddings for RAG retrieval
-        create_slide_embeddings(session_id, structured_slides)
-        
-        return text_content, slide_images
-        
-    except Exception as e:
-        print(f"Error extracting text from PDF: {str(e)}")
-        raise e
+    """Render every PDF page to a PNG for vision processing.
+
+    This used to also run fitz.get_text() and OCR; that pipeline has been
+    replaced by NVIDIA NIM vision transcription, which runs asynchronously
+    in the background. Here we only produce the images and register them.
+
+    Returns (image_paths, total_slides).
+    """
+    document = fitz.open(pdf_path)
+    print(f"Opened PDF: {pdf_path} with {len(document)} pages")
+
+    image_paths = []
+    if session_id not in session_images:
+        session_images[session_id] = []
+
+    for i, page in enumerate(document):
+        slide_num = i + 1
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+        img_data = pix.tobytes("png")
+        img_path = tempfile.mktemp(suffix='.png',
+                                    prefix=f'{session_id}_slide{slide_num}_')
+        with open(img_path, 'wb') as img_file:
+            img_file.write(img_data)
+        image_paths.append(img_path)
+        session_images[session_id].append(img_path)
+
+    document.close()
+
+    # Seed placeholders so any code that reads these dicts before transcription
+    # lands doesn't explode.
+    slide_contents_structured[session_id] = {
+        str(i + 1): "" for i in range(len(image_paths))
+    }
+    slide_contents[session_id] = ""
+    return image_paths, len(image_paths)
 
 def get_or_create_chat_session(session_id):
     """Get an existing chat session or create a new one"""
@@ -822,158 +828,122 @@ def is_title_slide(slide_text):
             
     return is_title
 
-def generate_groq_summary(slide_text, slide_num, streaming=True):
+SUMMARY_SYSTEM_PROMPT = (
+    "You are an expert analyst distilling presentation slides into concept-dense "
+    "summaries. Your summaries should let a reader grasp the slide's core idea "
+    "in under 15 seconds — no filler, no restating obvious context.\n\n"
+    "REQUIRED STRUCTURE (markdown):\n"
+    "1. **One-line thesis** in bold — what the slide actually argues, teaches, or claims. "
+    "Never start with 'This slide', 'The slide', 'In this slide', or similar filler.\n"
+    "2. Two to three short bullet points with the specific facts, numbers, mechanisms, "
+    "or steps that support the thesis. Prefer concrete values over paraphrase.\n"
+    "3. OPTIONAL final line, only when there is a substantive, evident link — "
+    "\"Connects to: Slide N (<one-clause reason>).\" "
+    "Include it only if the named slide directly defines, extends, contradicts, "
+    "or is continued by this one. Never invent a link. Omit entirely otherwise.\n\n"
+    "HARD RULES:\n"
+    "- Do not invent information that isn't in the transcription.\n"
+    "- Total length 60–90 words.\n"
+    "- Use bold only for the thesis and at most three key terms."
+)
+
+def generate_groq_summary(slide_text, slide_num, streaming=True,
+                          neighbor_context="", total_slides=0):
+    """Generate a concept-dense slide summary via NVIDIA NIM.
+
+    In streaming mode (used by /stream_summary) this returns a generator and
+    recovers gracefully on errors. In non-streaming mode (used by the batch
+    pipeline) it raises exceptions so the retry loop can catch and regroup
+    failed slides.
     """
-    Generate a summary using Groq API with more robust error handling
-    
-    Args:
-        slide_text (str): The text of the slide to summarize
-        slide_num (int): The slide number
-        streaming (bool): Whether to use streaming API
-        
-    Returns:
-        str or generator: Either a string with the summary or a generator yielding chunks
-    """
+    api_key = os.environ.get("NVIDIA_API_KEY", "")
+    if not api_key:
+        if streaming:
+            return iter([generate_basic_summary(slide_text, slide_num)])
+        raise RuntimeError("NVIDIA_API_KEY not set")
+
+    import socket
+    original_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(5.0)
+
     try:
-        print(f"\n=== Starting Groq summary generation for slide {slide_num} ===")
-        
-        # Get the API key directly
-        api_key = os.environ.get("NVIDIA_API_KEY", "")
-        
-        # Check if API key is available
-        if not api_key:
-            print("No Groq API key found, using local generation")
-            return generate_basic_summary(slide_text, slide_num)
-        
-        # Set a quick timeout for faster fallback if API is unresponsive
-        import socket
-        original_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(5.0)  # 5 second timeout
-        
-        try:
-            # Create the client
-            print("Creating Groq client")
-            client = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
-            
-            # Check if this slide contains OCR-extracted text
-            has_ocr = "[OCR-extracted text:]" in slide_text
-            
-            # Prepare the input message
-            system_prompt = """You are an expert presentation analyzer focusing on creating clear, concise summaries. Summarize the given slide content with these guidelines:
-1. Begin with the main point or purpose of the slide
-2. Include key facts, figures, and important takeaways
-3. Use bullet points if appropriate for clarity
-4. Keep the summary concise (2-4 sentences)
-5. Do not add information not present in the slide content
-6. Format may include markdown for highlighting key elements
-"""
+        client_local = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
 
-            # Add OCR-specific instructions if OCR text is present
-            if has_ocr:
-                system_prompt += """
-7. This slide contains OCR-extracted text from images. Focus on combining both regular text and OCR text to create a comprehensive summary.
-8. If the OCR text seems to contain errors, use your judgment to interpret what the correct text might be, but stay close to the content.
-"""
-            
-            # Estimate tokens for the request
-            est_prompt_tokens = len(slide_text) // 4 + 150  # System prompt + slide content
-            est_completion_tokens = 250  # Summary length
-            est_total_tokens = est_prompt_tokens + est_completion_tokens
-            
-            user_message = f"Slide {slide_num} content:\n\n{slide_text}\n\nPlease provide a clear, concise summary of this slide."
-            
-            # Create messages
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ]
-            
-            # Handle streaming mode
-            if streaming:
-                print(f"Making Groq API streaming call for slide {slide_num}")
-                try:
-                    # Create streaming call with timeout
-                    stream = client.chat.completions.create(
-                        model="google/gemma-4-31b-it",
-                        messages=messages,
-                        temperature=0.3,
-                        max_tokens=500,
-                        stream=True,
-                        timeout=8.0  # Set an explicit timeout for the API call
-                    )
-                    
-                    # Process streaming response
-                    def process_stream():
-                        try:
-                            # Keep track of timeout
-                            start_time = time.time()
-                            timeout_seconds = 8.0
-                            
-                            for chunk in stream:
-                                # Check for timeout during streaming
-                                if time.time() - start_time > timeout_seconds:
-                                    print(f"Streaming timed out after {timeout_seconds} seconds")
-                                    yield "<<<TIMEOUT_ERROR>>>"
-                                    break
+        context_block = ""
+        if neighbor_context:
+            context_block = (
+                "Context from adjacent slides (for optional cross-reference only — "
+                "do not summarize these):\n" + neighbor_context + "\n\n"
+            )
+        total_hint = f"Deck size: {total_slides} slides. " if total_slides else ""
+        user_message = (
+            f"{total_hint}Produce the summary for Slide {slide_num}.\n\n"
+            f"{context_block}"
+            f"Slide {slide_num} transcription:\n{slide_text}"
+        )
 
-                                # NVIDIA NIM emits a terminal chunk with empty `choices`
-                                # carrying only usage data — skip it instead of indexing.
-                                if not getattr(chunk, "choices", None):
-                                    continue
+        messages = [
+            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ]
 
-                                choice = chunk.choices[0]
-                                delta = getattr(choice, "delta", None)
-                                if delta is None:
-                                    continue
-                                content = getattr(delta, "content", None) or getattr(delta, "reasoning_content", None)
-                                if content:
-                                    yield content
-                        except Exception as stream_error:
-                            print(f"Error during streaming: {stream_error}")
-                            yield f"Error: {str(stream_error)}"
+        if streaming:
+            print(f"NIM streaming summary call for slide {slide_num}")
+            try:
+                stream = client_local.chat.completions.create(
+                    model=VISION_MODEL,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=400,
+                    stream=True,
+                    timeout=30.0,
+                )
                     
-                    print("Returning stream generator")
-                    return process_stream()
-                    
-                except Exception as stream_error:
-                    print(f"Stream setup error: {str(stream_error)}")
-                    # Fall back to non-streaming on error
-                    print("Falling back to non-streaming mode")
-                    streaming = False
-            
-            # Non-streaming mode (either by choice or as fallback)
-            if not streaming:
-                try:
-                    print(f"Making Groq API non-streaming call for slide {slide_num}")
-                    response = client.chat.completions.create(
-                        model="google/gemma-4-31b-it",
-                        messages=messages,
-                        temperature=0.3,
-                        max_tokens=500,
-                        timeout=8.0  # Set an explicit timeout for the API call
-                    )
-                    
-                    message = response.choices[0].message
-                    summary = getattr(message, "content", None) or getattr(message, "reasoning_content", "")
-                    print(f"Received non-streaming summary: {summary[:50]}...")
-                    return summary
-                except Exception as api_error:
-                    print(f"API error in non-streaming mode: {str(api_error)}")
-                    return generate_basic_summary(slide_text, slide_num)
-        except (socket.timeout, TimeoutError) as timeout_error:
-            print(f"Connection timed out while creating client: {str(timeout_error)}")
-            return generate_basic_summary(slide_text, slide_num)
-        except Exception as e:
-            print(f"Error setting up Groq client: {str(e)}")
-            return generate_basic_summary(slide_text, slide_num)
-        finally:
-            # Restore original socket timeout
-            socket.setdefaulttimeout(original_timeout)
-                
-    except Exception as e:
-        print(f"Uncaught error in generate_groq_summary: {str(e)}")
-        # Return a basic summary as fallback
-        return generate_basic_summary(slide_text, slide_num)
+                def process_stream():
+                    try:
+                        start_time = time.time()
+                        timeout_seconds = 30.0
+                        for chunk in stream:
+                            if time.time() - start_time > timeout_seconds:
+                                yield "<<<TIMEOUT_ERROR>>>"
+                                break
+                            if not getattr(chunk, "choices", None):
+                                continue
+                            choice = chunk.choices[0]
+                            delta = getattr(choice, "delta", None)
+                            if delta is None:
+                                continue
+                            content = (getattr(delta, "content", None)
+                                       or getattr(delta, "reasoning_content", None))
+                            if content:
+                                yield content
+                    except Exception as stream_error:
+                        print(f"Error during streaming: {stream_error}")
+                        yield f"Error: {str(stream_error)}"
+
+                return process_stream()
+
+            except Exception as stream_error:
+                print(f"Streaming setup failed: {stream_error}; falling back to non-streaming")
+                streaming = False
+
+        # Non-streaming path — raises on failure so the batch pipeline can retry.
+        response = client_local.chat.completions.create(
+            model=VISION_MODEL,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=400,
+            timeout=30.0,
+        )
+        message = response.choices[0].message
+        summary = (getattr(message, "content", None)
+                   or getattr(message, "reasoning_content", "")).strip()
+        if not summary:
+            raise RuntimeError(f"Empty summary from NIM for slide {slide_num}")
+        return summary
+
+    finally:
+        socket.setdefaulttimeout(original_timeout)
 
 # Function to generate a more meaningful summary when API models are unavailable
 def generate_basic_summary(slide_text, slide_num):
@@ -1216,17 +1186,16 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
         
         # Create messages list for the chat
         messages = [
-            {"role": "system", "content": """You are a helpful assistant answering questions about presentation slides. Your answers must be direct, concise, and contain ONLY the final answer with NO thinking process or meta-commentary. Never mention how you're approaching the answer.
+            {"role": "system", "content": """You are a presentation analyst helping the user deeply understand a specific deck. The retrieved slide content in subsequent system messages is your ONLY source of truth — never invent facts that aren't there.
 
-When a user asks about a specific slide (e.g., "explain slide 9"), you should:
-1. Focus primarily on that slide's content
-2. If the slide doesn't exist in the presentation, clearly state this fact
-3. Only provide information from other slides when it directly helps answer the question
-
-For code-related questions:
-1. Explain the code's purpose and functionality clearly
-2. Highlight key components and their interactions
-3. Provide concrete examples of what the code does when possible"""}
+HOW TO ANSWER
+1. Give only the direct answer. No "let me think", "looking at the slides", "based on the content" preambles. No meta-commentary about your process.
+2. When the answer draws from more than one slide, cite each inline as "(Slide N)" at the end of the relevant sentence, and add ONE short clause explaining how the slides relate to each other. Example: "Revenue model charges a flat ₹50 per booking (Slide 6), which builds on the pricing principles introduced earlier (Slide 3)."
+3. When a concept from one slide is clarified, defined, extended, or contradicted by another, say so explicitly. Example: "Slide 4 introduces the metric; Slide 7 shows how it's computed."
+4. If the user asks about a slide that doesn't exist, say so clearly, then point to the closest related slides.
+5. Match the length of your answer to the question: short question -> short answer, complex question -> structured answer with bullets.
+6. Prefer concrete specifics (numbers, names, mechanisms) from the slides over vague summaries.
+7. For code or technical content, explain the purpose, key components, and interactions — using actual snippets or values from the slides when present."""}
         ]
         
         # Handle slide-specific queries
@@ -1414,30 +1383,45 @@ def index():
 
 @app.route('/health')
 def health():
-    """Health check endpoint for Google Cloud Run"""
-    # Detailed platform information
-    platform_info = {
-        "system": platform.system(),
-        "release": platform.release(),
-        "version": platform.version()
-    }
-    
-    # Check Tesseract path
-    tesseract_path = "System PATH"
-    if platform.system() == 'Windows':
-        tesseract_path = pytesseract.pytesseract.tesseract_cmd
-    
+    """Health check endpoint for Google Cloud Run."""
     return jsonify({
         "status": "healthy",
         "timestamp": str(datetime.datetime.now()),
         "service": "Sumora AI",
-        "platform": platform_info,
-        "tesseract": {
-            "available": tesseract_available,
-            "path": tesseract_path
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
         },
-        "groq_available": groq_available
+        "libreoffice_available": bool(which("soffice") or which("libreoffice")),
+        "nvidia_available": groq_available,
     })
+
+
+@app.route('/processing_status/<session_id>')
+@login_required
+def processing_status(session_id):
+    """Per-slide pipeline status for the upload progress UI. Returns:
+        {
+          "overall": "transcribing"|"summarizing"|"retrying"|"complete"|...,
+          "total_slides": N,
+          "slides": {
+              "1": {"transcription": "...", "summary": "...", "retries": n, "error": null},
+              ...
+          }
+        }
+    """
+    with status_lock:
+        sess = slide_status.get(session_id)
+        if not sess:
+            return jsonify({"error": "unknown session"}), 404
+        # Return a defensive copy since the background thread keeps mutating.
+        payload = {
+            "overall": sess.get("overall"),
+            "total_slides": sess.get("total_slides"),
+            "slides": {k: dict(v) for k, v in sess.get("slides", {}).items()},
+        }
+    return jsonify(payload)
 
 @app.route('/app')
 @login_required
@@ -1457,65 +1441,58 @@ def upload_slides():
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
     
-    # Check if the file is a PDF
-    if not file.filename.lower().endswith('.pdf'):
-        return jsonify({'error': 'Only PDF files are supported'}), 400
-    
+    # Accept PDF and PowerPoint formats.
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in SUPPORTED_UPLOAD_EXTENSIONS:
+        return jsonify({'error': f'Unsupported file type {ext}. Upload PDF or PPTX.'}), 400
+
     try:
-        # Create a unique session ID if not provided
         session_id = str(uuid.uuid4())
-        
-        # Set as the active session for convenience in development
         global active_session_id
         active_session_id = session_id
-    
-        # Save the uploaded file
+
         filename = secure_filename(file.filename)
         upload_dir = os.path.join(tempfile.gettempdir(), 'slide_uploads')
         os.makedirs(upload_dir, exist_ok=True)
         file_path = os.path.join(upload_dir, f"{session_id}_{filename}")
         file.save(file_path)
-    
-        # Process the PDF in the background
-        print(f"Processing PDF: {file_path}")
-        
-        # Extract text and render slide images
-        text_content, slide_images = extract_text_from_pdf(file_path, session_id)
-        
-        # Create or update the chat session
+        print(f"Saved upload: {file_path}")
+
+        # Convert PPTX/PPT to PDF via LibreOffice before the render step.
+        try:
+            pdf_path = convert_to_pdf_if_needed(file_path, upload_dir)
+        except Exception as conv_err:
+            print(f"Conversion failure: {conv_err}")
+            return jsonify({'error': f'Could not process presentation: {conv_err}'}), 400
+
+        image_paths, total_slides = extract_text_from_pdf(pdf_path, session_id)
+        _init_session_status(session_id, total_slides)
+
         get_or_create_chat_session(session_id)
-        
-        # Initialize the SLIDE_DATA structure for this session
         app.config['SLIDE_DATA'][session_id] = {
             'extraction_data': {
                 'slide_texts': slide_contents_structured.get(session_id, {}),
             },
             'slide_summaries': {},
-            'slide_titles': {}
+            'slide_titles': {},
+            'image_paths': list(image_paths),
         }
-        
-        # Count total slides
-        slide_pattern = re.compile(r"Slide\s+(\d+):")
-        slide_matches = slide_pattern.findall(text_content)
-        total_slides = len(slide_matches) if slide_matches else len(slide_images)
-        
-        # Start background thread to generate summaries for all slides
-        import threading
-        summary_thread = threading.Thread(
-            target=generate_all_summaries_background,
-            args=(session_id,)
+
+        # Kick off the full async pipeline: transcribe -> summarize -> retry.
+        worker = threading.Thread(
+            target=process_session_background,
+            args=(session_id,),
+            daemon=True,
         )
-        summary_thread.daemon = True
-        summary_thread.start()
-        
-        # Return success with session ID and total slides
+        worker.start()
+
         return jsonify({
-            'success': True, 
-            'message': 'File uploaded and processed successfully',
+            'success': True,
+            'message': 'File uploaded; processing started in background.',
             'session_id': session_id,
-            'total_slides': total_slides
+            'total_slides': total_slides,
         })
-    
+
     except Exception as e:
         print(f"Error processing uploaded file: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -2355,79 +2332,215 @@ Format:
         socket.setdefaulttimeout(original_timeout)
 
 # Add this function after the existing functions
-def generate_all_summaries_background(session_id):
+def _chunked(iterable, size):
+    """Yield lists of at most `size` items from iterable, preserving order."""
+    buf = []
+    for item in iterable:
+        buf.append(item)
+        if len(buf) >= size:
+            yield buf
+            buf = []
+    if buf:
+        yield buf
+
+
+def _run_transcription_batch(session_id, image_paths_by_slide, slide_nums):
+    """Transcribe the given slide numbers concurrently (they share a batch
+    window). Returns the list of slide nums that FAILED. Successes are written
+    into slide_contents_structured[session_id] and slide_status.
     """
-    Generate summaries for all slides in the background.
-    This avoids making the user wait for all summaries to be generated during upload.
-    
-    Args:
-        session_id (str): The session ID to generate summaries for
-    """
-    print(f"Starting background generation of summaries for session {session_id}")
-    
-    # Get slide data
+    failures = []
+    structured = slide_contents_structured.setdefault(session_id, {})
+
+    def _work(n):
+        path = image_paths_by_slide.get(n)
+        if not path or not os.path.isfile(path):
+            raise RuntimeError(f"no image for slide {n}")
+        return vision_transcribe_slide(path, n)
+
+    with ThreadPoolExecutor(max_workers=min(len(slide_nums), PROCESSING_BATCH_SIZE)) as pool:
+        future_to_slide = {pool.submit(_work, n): n for n in slide_nums}
+        for fut in as_completed(future_to_slide):
+            n = future_to_slide[fut]
+            try:
+                text = fut.result()
+                structured[str(n)] = text
+                _update_slide_state(session_id, n, transcription="done", error=None)
+                print(f"[{session_id[:8]}] transcribed slide {n} ({len(text)} chars)")
+            except Exception as exc:
+                failures.append(n)
+                _update_slide_state(session_id, n, transcription="failed",
+                                    error=f"transcribe: {exc}")
+                print(f"[{session_id[:8]}] transcription FAILED slide {n}: {exc}")
+    return failures
+
+
+def _run_summary_batch(session_id, slide_nums):
+    """Generate concept-dense summaries for the given slides using the
+    transcribed text and neighbor context. Returns list of failed slide nums."""
+    failures = []
+    structured = slide_contents_structured.get(session_id, {})
     slide_data = app.config.get('SLIDE_DATA', {}).get(session_id, {})
+    summaries = slide_data.setdefault('slide_summaries', {})
+    total = len(structured)
+
+    def _work(n):
+        text = structured.get(str(n), "")
+        if not text.strip():
+            raise RuntimeError("empty transcription (transcription must succeed first)")
+        neighbors = _collect_neighbor_context(structured, n, total)
+        return generate_groq_summary(
+            slide_text=text, slide_num=n, streaming=False,
+            neighbor_context=neighbors, total_slides=total,
+        )
+
+    with ThreadPoolExecutor(max_workers=min(len(slide_nums), PROCESSING_BATCH_SIZE)) as pool:
+        future_to_slide = {pool.submit(_work, n): n for n in slide_nums}
+        for fut in as_completed(future_to_slide):
+            n = future_to_slide[fut]
+            try:
+                summary = fut.result()
+                if not summary or (isinstance(summary, str) and not summary.strip()):
+                    raise RuntimeError("empty summary")
+                summaries[str(n)] = summary
+                _update_slide_state(session_id, n, summary="done", error=None)
+                print(f"[{session_id[:8]}] summarized slide {n}")
+            except Exception as exc:
+                failures.append(n)
+                _update_slide_state(session_id, n, summary="failed",
+                                    error=f"summarize: {exc}")
+                print(f"[{session_id[:8]}] summary FAILED slide {n}: {exc}")
+    return failures
+
+
+def _collect_neighbor_context(structured, slide_num, total, radius=2, max_chars=500):
+    """Return a compact string of up to `radius` previous+next slide
+    transcriptions, truncated to keep the prompt short."""
+    parts = []
+    for offset in range(-radius, radius + 1):
+        if offset == 0:
+            continue
+        n = slide_num + offset
+        if n < 1 or n > total:
+            continue
+        text = (structured.get(str(n)) or "").strip()
+        if not text:
+            continue
+        snippet = text[:max_chars].strip()
+        parts.append(f"Slide {n}:\n{snippet}")
+    return "\n\n".join(parts)
+
+
+def process_session_background(session_id):
+    """End-to-end async pipeline for a session:
+        1. Transcribe all slides, 5 at a time, with a rate-limit-safe pause.
+        2. Re-index RAG after every batch so chat/search catch up progressively.
+        3. Summarize all slides, 5 at a time, using transcription + neighbor context.
+        4. Retry failed transcriptions (groups of up to 5), then failed summaries.
+        5. Final RAG re-index to include any retry-recovered slides.
+    """
+    print(f"[{session_id[:8]}] pipeline start")
+    slide_data = app.config.get('SLIDE_DATA', {}).get(session_id)
     if not slide_data:
-        print(f"No data found for session {session_id}")
+        print(f"[{session_id[:8]}] no SLIDE_DATA, aborting")
         return
-        
-    # Get slide texts
-    extraction_data = slide_data.get('extraction_data', {})
-    if not extraction_data:
-        print(f"No extraction data found for session {session_id}")
+
+    image_paths = slide_data.get('image_paths') or session_images.get(session_id) or []
+    image_paths_by_slide = {i + 1: p for i, p in enumerate(image_paths)}
+    total = len(image_paths)
+    if total == 0:
+        _set_overall_state(session_id, "failed")
         return
-        
-    slide_texts = extraction_data.get('slide_texts', {})
-    if not slide_texts:
-        print(f"No slide texts found for session {session_id}")
-        return
-        
-    # Initialize slide_summaries if not present
-    if 'slide_summaries' not in slide_data:
-        slide_data['slide_summaries'] = {}
-        
-    # Generate presentation overview once for efficiency
-    presentation_overview = None
-    try:
-        presentation_overview = generate_presentation_overview(session_id)
-    except Exception as e:
-        print(f"Error generating presentation overview: {str(e)}")
-        # Continue without overview
-        
-    # Process each slide
-    print(f"Generating summaries for {len(slide_texts)} slides in session {session_id}")
-    
-    for slide_num_str, slide_text in slide_texts.items():
-        # Skip if already generated
-        if slide_num_str in slide_data['slide_summaries']:
-            continue
-            
-        # Skip empty slides
-        if not slide_text.strip():
-            continue
-            
-        slide_num = int(slide_num_str)
-        print(f"Generating summary for slide {slide_num}")
-        
+
+    # --- Phase 1: transcription ---
+    _set_overall_state(session_id, "transcribing")
+    failed_transcribe = []
+    for batch in _chunked(range(1, total + 1), PROCESSING_BATCH_SIZE):
+        for n in batch:
+            _update_slide_state(session_id, n, transcription="processing")
+        fails = _run_transcription_batch(session_id, image_paths_by_slide, batch)
+        failed_transcribe.extend(fails)
         try:
-            # Generate summary without streaming for efficiency
-            summary = generate_groq_summary(
-                slide_text=slide_text,
-                slide_num=slide_num,
-                streaming=False
-            )
-            
-            # Store the summary
-            slide_data['slide_summaries'][slide_num_str] = summary
-            print(f"Successfully generated summary for slide {slide_num}")
-            
-        except Exception as e:
-            print(f"Error generating summary for slide {slide_num}: {str(e)}")
-            # Use basic fallback summary
-            basic_summary = generate_basic_summary(slide_text, slide_num)
-            slide_data['slide_summaries'][slide_num_str] = basic_summary
-            
-    print(f"Completed background generation of summaries for session {session_id}")
+            create_slide_embeddings(session_id, slide_contents_structured.get(session_id, {}))
+        except Exception as re_err:
+            print(f"[{session_id[:8]}] incremental RAG reindex failed: {re_err}")
+        time.sleep(PROCESSING_BATCH_DELAY_SECONDS)
+
+    # --- Phase 1.5: retry failed transcriptions ---
+    retry_round = 0
+    pending = list(failed_transcribe)
+    while pending and retry_round < MAX_RETRIES_PER_SLIDE:
+        retry_round += 1
+        _set_overall_state(session_id, "retrying")
+        print(f"[{session_id[:8]}] transcription retry round {retry_round}: {pending}")
+        next_pending = []
+        for group in _chunked(pending, RETRY_BATCH_SIZE):
+            for n in group:
+                _update_slide_state(session_id, n, transcription="processing",
+                                    retries=retry_round)
+            fails = _run_transcription_batch(session_id, image_paths_by_slide, group)
+            next_pending.extend(fails)
+            try:
+                create_slide_embeddings(session_id, slide_contents_structured.get(session_id, {}))
+            except Exception as re_err:
+                print(f"[{session_id[:8]}] retry RAG reindex failed: {re_err}")
+            time.sleep(PROCESSING_BATCH_DELAY_SECONDS)
+        pending = next_pending
+
+    # --- Phase 2: summarization ---
+    _set_overall_state(session_id, "summarizing")
+    # Only summarize slides that have transcriptions.
+    structured = slide_contents_structured.get(session_id, {})
+    summarizable = [n for n in range(1, total + 1) if (structured.get(str(n)) or "").strip()]
+    failed_summary = []
+    for batch in _chunked(summarizable, PROCESSING_BATCH_SIZE):
+        for n in batch:
+            _update_slide_state(session_id, n, summary="processing")
+        fails = _run_summary_batch(session_id, batch)
+        failed_summary.extend(fails)
+        time.sleep(PROCESSING_BATCH_DELAY_SECONDS)
+
+    # --- Phase 2.5: retry failed summaries ---
+    retry_round = 0
+    pending = list(failed_summary)
+    while pending and retry_round < MAX_RETRIES_PER_SLIDE:
+        retry_round += 1
+        _set_overall_state(session_id, "retrying")
+        print(f"[{session_id[:8]}] summary retry round {retry_round}: {pending}")
+        next_pending = []
+        for group in _chunked(pending, RETRY_BATCH_SIZE):
+            for n in group:
+                _update_slide_state(session_id, n, summary="processing",
+                                    retries=retry_round)
+            fails = _run_summary_batch(session_id, group)
+            next_pending.extend(fails)
+            time.sleep(PROCESSING_BATCH_DELAY_SECONDS)
+        pending = next_pending
+
+    # --- Final RAG sync + presentation overview ---
+    try:
+        create_slide_embeddings(session_id, slide_contents_structured.get(session_id, {}))
+    except Exception as re_err:
+        print(f"[{session_id[:8]}] final RAG reindex failed: {re_err}")
+
+    try:
+        generate_presentation_overview(session_id)
+    except Exception as ov_err:
+        print(f"[{session_id[:8]}] overview generation failed: {ov_err}")
+
+    # Determine final overall state.
+    with status_lock:
+        sess = slide_status.get(session_id, {})
+        slides = sess.get("slides", {})
+        all_done = all(s.get("summary") == "done" for s in slides.values())
+        any_done = any(s.get("summary") == "done" for s in slides.values())
+        sess["overall"] = "complete" if all_done else ("partial" if any_done else "failed")
+
+    print(f"[{session_id[:8]}] pipeline done")
+
+
+# Legacy alias so any stray references keep working.
+generate_all_summaries_background = process_session_background
 
 def get_available_slides(session_id):
     """

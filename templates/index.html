@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sumora</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='Sumora_images/Sumora Logo.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='Sumora_images/Sumora Logo.png') }}">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1601,14 +1603,14 @@
                 <div class="upload-card">
                     <img src="/static/images/Sumora Full logo.png" alt="Sumora Logo" class="upload-logo">
                     <h1 class="upload-title">Upload Your Presentation</h1>
-                    <p class="upload-description">Upload your slides (PDF format) for AI-powered analysis and summaries</p>
-                    
+                    <p class="upload-description">Upload your slides (PDF or PPTX) for AI-powered analysis and summaries</p>
+
                     <form id="upload-form" enctype="multipart/form-data">
                         <label for="slide-file" class="d-block">
                             <div class="upload-area">
-                                <input type="file" id="slide-file" name="file" accept=".pdf" class="d-none">
+                                <input type="file" id="slide-file" name="file" accept=".pdf,.pptx,.ppt" class="d-none">
                                 <i class="fas fa-cloud-upload-alt upload-icon"></i>
-                                <p class="upload-text">Drag & drop your PDF file here<br>or click to browse</p>
+                                <p class="upload-text">Drag & drop your PDF or PPTX here<br>or click to browse</p>
                             </div>
                         </label>
                         
