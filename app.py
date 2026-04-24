@@ -1087,7 +1087,7 @@ def extract_slide_title(slide_text, slide_num):
     # If we didn't find a good title, return the default
     return default_title
 
-def get_slide_content(session_id, slide_num, wait_if_pending=True, max_wait_seconds=20.0):
+def get_slide_content(session_id, slide_num, wait_if_pending=True, max_wait_seconds=5.0):
     """Get the transcribed content of a specific slide.
 
     If the slide is a valid index but its transcription hasn't landed yet, this
@@ -1553,94 +1553,26 @@ def get_summaries():
         if 'slide_summaries' not in slide_data:
             slide_data['slide_summaries'] = {}
             
-        # Classify slides into: pending (not yet transcribed), cached, or to-generate.
-        slides_to_process = []
-        valid_slide_nums = []
+        # /get_summaries is CACHE-ONLY. Generation happens exclusively inside
+        # the background pipeline (process_session_background) so we never
+        # have two code paths racing on the same slide. Anything not cached
+        # is reported as pending — the frontend should rely on the
+        # /processing_status poll to know when to refetch.
+        result = {}
         pending_slides = []
+        cached = slide_data.get('slide_summaries', {})
 
         for slide_num in slide_nums:
             str_slide_num = str(slide_num)
-            if str_slide_num not in slide_texts:
-                print(f"Slide {slide_num} not in slide_texts; available: {list(slide_texts.keys())[:10]}...")
-                continue
-
-            slide_text = slide_texts.get(str_slide_num, "")
-            if not slide_text.strip():
-                # Transcription hasn't landed yet — surface this to the client so
-                # the UI can keep polling /processing_status instead of showing
-                # "Basic Summary" placeholders forever.
+            if str_slide_num in cached and cached[str_slide_num]:
+                result[slide_num] = cached[str_slide_num]
+            else:
                 pending_slides.append(slide_num)
-                continue
-
-            if force_regenerate or str_slide_num not in slide_data['slide_summaries']:
-                slides_to_process.append(slide_num)
-            valid_slide_nums.append(slide_num)
-            
-        # If we don't need to process any slides, return cached results + pending markers.
-        if not slides_to_process:
-            result = {}
-            for slide_num in valid_slide_nums:
-                str_slide_num = str(slide_num)
-                if str_slide_num in slide_data['slide_summaries']:
-                    result[slide_num] = slide_data['slide_summaries'][str_slide_num]
-            if pending_slides:
-                result['_pending'] = pending_slides
-            print(f"Returning cached summaries for {len(result)} slides, pending={pending_slides}")
-            return jsonify(result)
-            
-        # Process slides that need summarization
-        print(f"Processing {len(slides_to_process)} slides for session {session_id}")
-        
-        # Get or generate presentation overview once for efficiency
-        presentation_overview = None
-        if 'presentation_overview' in slide_data:
-            presentation_overview = slide_data['presentation_overview']
-        else:
-            try:
-                presentation_overview = generate_presentation_overview(session_id)
-            except Exception as e:
-                print(f"Error generating presentation overview: {str(e)}")
-                # Continue without overview
-                
-        # Process each slide with adjacent-slide context so cross-slide
-        # references match what the background pipeline produces.
-        results = {}
-        total_slides_count = len(slide_texts)
-
-        for slide_num in valid_slide_nums:
-            str_slide_num = str(slide_num)
-
-            if str_slide_num in slide_data['slide_summaries'] and not force_regenerate:
-                results[slide_num] = slide_data['slide_summaries'][str_slide_num]
-                continue
-            if str_slide_num not in slide_texts:
-                continue
-
-            slide_text = slide_texts.get(str_slide_num, "")
-            if not slide_text.strip():
-                continue
-
-            neighbor_context = build_neighbor_context_from_texts(slide_texts, slide_num)
-            try:
-                summary = generate_groq_summary(
-                    slide_text=slide_text,
-                    slide_num=slide_num,
-                    streaming=False,
-                    neighbor_context=neighbor_context,
-                    total_slides=total_slides_count,
-                )
-                slide_data['slide_summaries'][str_slide_num] = summary
-                results[slide_num] = summary
-            except Exception as e:
-                print(f"Error generating summary for slide {slide_num}: {str(e)}")
-                basic_summary = generate_basic_summary(slide_text, slide_num)
-                slide_data['slide_summaries'][str_slide_num] = basic_summary
-                results[slide_num] = basic_summary
 
         if pending_slides:
-            results['_pending'] = pending_slides
-        return jsonify(results)
-        
+            result['_pending'] = pending_slides
+        return jsonify(result)
+
     except Exception as e:
         print(f"Error in get_summaries: {str(e)}")
         return jsonify({"error": str(e)}), 500
@@ -1973,43 +1905,29 @@ def generate(session_id, slide_num, force_regenerate=False):
         yield json.dumps({"error": f"Slide {slide_num} not found"})
         return
     
-    # Get the slide text. If the background vision pipeline hasn't transcribed
-    # this slide yet, wait for it — yielding progress events so the client can
-    # display "Transcribing slide N..." instead of a generic error.
+    # Fail-fast for slides whose transcription hasn't landed yet. Holding the
+    # request open for 45s while waiting was the single biggest source of
+    # request pile-ups: every stream request tied up a worker and, when the
+    # frontend had the old "open stream per slide" pattern, 22 slides worth
+    # of 45s waits made the pipeline look stuck. The caller is expected to
+    # rely on /processing_status + /get_summaries for the passive case and
+    # only invoke /stream_summary on explicit regenerate.
     slide_text = slide_texts.get(str_slide_num, "")
     if not slide_text.strip():
-        print(f"Slide {slide_num} not transcribed yet; waiting for pipeline")
-        waited = False
-        for event in wait_for_slide_ready(session_id, slide_num):
-            if "progress" in event:
-                waited = True
-                yield json.dumps(event)
-                continue
-            if event.get("ready"):
-                slide_text = slide_texts.get(str_slide_num, "")
-                break
-            # Not ready and we're done waiting.
-            reason = event.get("reason", "unknown")
-            if reason == "failed":
-                detail = event.get("error") or "transcription failed"
-                yield json.dumps({
-                    "error": f"Slide {slide_num} could not be transcribed ({detail}). "
-                             "Try regenerating — it may succeed on another attempt."
-                })
-            elif reason == "timeout":
-                yield json.dumps({
-                    "error": f"Slide {slide_num} is still being processed. Give it a few more seconds and try again."
-                })
-            else:
-                yield json.dumps({"error": f"Slide {slide_num} is not available yet."})
-            return
-
-        if not slide_text.strip():
-            yield json.dumps({"error": f"Slide {slide_num} is empty after transcription."})
-            return
-        if waited:
-            # Refresh the client — transcription finished, summary generation starting.
-            yield json.dumps({"progress": f"Generating summary for slide {slide_num}..."})
+        slot = _get_slide_state(session_id, slide_num) or {}
+        t = slot.get("transcription") or "pending"
+        retries = slot.get("retries", 0) or 0
+        if t == "failed" and retries >= MAX_RETRIES_PER_SLIDE:
+            yield json.dumps({
+                "error": f"Slide {slide_num} could not be transcribed after retries. "
+                         f"Click Regenerate to try again."
+            })
+        else:
+            yield json.dumps({
+                "progress": f"Slide {slide_num} is still being processed…",
+                "complete": True,
+            })
+        return
 
     # Initialize slide_summaries if not present
     if 'slide_summaries' not in slide_data:

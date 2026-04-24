@@ -265,118 +265,20 @@ async function fetchSlideImages() {
     }
 }
 
-// Fetch summaries for slides in smaller batches with streaming updates
+// Pull any summaries the background pipeline has already cached. Single
+// request, no per-batch walk, no placeholder fallback. The /processing_status
+// poll fills in the rest as the pipeline finishes each slide.
 async function fetchSlideSummaries() {
-    if (!sessionId) {
-        console.error("No active session");
-        return;
-    }
-    
-    // Mark that we're loading summaries
+    if (!sessionId) return;
     isSummaryLoading = true;
-    
     try {
-        // Get summaries in batches to show progress
-        const batchSize = 5; // Process 5 slides at a time
-        const startSlide = 1;
-        const numBatches = Math.ceil(totalSlides / batchSize);
-        
-        for (let batch = 0; batch < numBatches; batch++) {
-            const batchStart = startSlide + (batch * batchSize);
-            const batchEnd = Math.min(batchStart + batchSize - 1, totalSlides);
-            
-            console.log(`Fetching summary batch ${batch + 1}/${numBatches}: slides ${batchStart}-${batchEnd}`);
-            
-            // Create array of slide numbers for this batch
-            const slideNumsArray = [];
-            for (let i = batchStart; i <= batchEnd; i++) {
-                slideNumsArray.push(i);
-            }
-            
-            // Create comma-separated list of slide numbers
-            const slideNums = slideNumsArray.join(',');
-            
-            // Use GET request with query parameters
-            const url = `/get_summaries?session_id=${sessionId}&slide_nums=${slideNums}&force_regenerate=false`;
-            
-            const response = await fetch(url, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
-            });
-            
-            if (!response.ok) {
-                console.error(`Error fetching summaries: ${response.status} ${response.statusText}`);
-                continue; // Try the next batch
-            }
-            
-            const data = await response.json();
-            
-            if (data.error) {
-                console.error(`Error fetching summary batch ${batch + 1}:`, data.error);
-                continue; // Try the next batch
-            }
-            
-            // Collect slide indexes the server reported as still-processing so
-            // we don't overwrite them with a "Basic Summary" placeholder below.
-            const pendingSlideNums = Array.isArray(data._pending) ? data._pending : [];
-            pendingSlideNums.forEach(n => {
-                const idx = parseInt(n, 10) - 1;
-                if (idx >= 0 && idx < slideData.length) {
-                    slideData[idx].pending = true;
-                    slideData[idx].isLoading = true;
-                }
-            });
-
-            // Update slideData with new summaries (skip the _pending marker key).
-            for (const [slideNum, summary] of Object.entries(data)) {
-                if (slideNum === '_pending') continue;
-                const slideIndex = parseInt(slideNum, 10) - 1;
-                if (slideIndex >= 0 && slideIndex < slideData.length) {
-                    slideData[slideIndex].summary = summary;
-                    slideData[slideIndex].isLoading = false;
-                    slideData[slideIndex].pending = false;
-                }
-            }
-            
-            // Update UI if the current slide is in this batch
-            if (currentSlideIndex >= batchStart - 1 && currentSlideIndex <= batchEnd - 1) {
-                updateSlideSummary(slideData[currentSlideIndex]);
-            }
-        }
-        
-        // Ensure all slides have at least a basic summary — but leave slides
-        // whose transcription is still in progress untouched; the status poll
-        // will retry /get_summaries once they're ready.
-        slideData.forEach((slide, index) => {
-            if (slide.pending) return;
-            if (!slide.summary || slide.summary === "Loading summary...") {
-                slide.summary = `**Basic Summary** - This is slide ${slide.slideNumber} of the presentation. A detailed summary couldn't be generated automatically.`;
-                slide.isLoading = false;
-            }
-        });
-        
-        // Final UI update
+        const allSlideNums = [];
+        for (let i = 1; i <= totalSlides; i++) allSlideNums.push(i);
+        const populated = await fetchCachedSummariesFor(allSlideNums);
+        console.log(`Initial cache fetch populated ${populated.length}/${totalSlides} summaries`);
         createThumbnails();
-        showSlide(currentSlideIndex); // Refresh current slide view
-        
-        // Mark that we're done loading summaries
-        isSummaryLoading = false;
-        
-    } catch (error) {
-        console.error("Error fetching slide summaries:", error);
-        
-        // Ensure all slides have at least a basic summary even if there was an error
-        slideData.forEach((slide, index) => {
-            if (!slide.summary || slide.summary === "Loading summary...") {
-                slide.summary = `**Basic Summary** - This is slide ${slide.slideNumber} of the presentation. A detailed summary couldn't be generated due to an error.`;
-                slide.isLoading = false;
-            }
-        });
-        
-        // Final UI update
-        showSlide(currentSlideIndex);
+        if (slideData[currentSlideIndex]) updateSlideSummary(slideData[currentSlideIndex]);
+    } finally {
         isSummaryLoading = false;
     }
 }
@@ -522,16 +424,25 @@ function applySlideStatus(slideNum, state) {
     }
     tile.classList.add(stateClass);
 
-    // If this slide just transitioned to summary:done AND the user is
-    // currently viewing it, trigger a stream to pull the cached summary
-    // into the panel — otherwise the user has to manually re-click.
+    // Detect transitions — we only react to pending->done and
+    // pending->permanently-failed, never during in-flight states, to avoid
+    // firing network calls on noisy polls.
     const prev = lastKnownSummaryState[slideNum];
+    const n = parseInt(slideNum, 10);
+    const idx = slideData.findIndex(s => s.slideNumber === n);
+
     if (state.summary === 'done' && prev !== 'done') {
-        const current = slideData[currentSlideIndex];
-        if (current && parseInt(slideNum, 10) === current.slideNumber) {
-            // Re-fetch via /stream_summary (served from cache), without
-            // forcing regeneration. This also re-typesets math.
-            streamSummary(current.slideNumber, false);
+        // Pull the cached summary text (single /get_summaries call). If the
+        // user is viewing this slide, updateSlideSummary is repainted inside.
+        fetchCachedSummariesFor([n]);
+    } else if (stateClass === 'state-failed' && idx !== -1) {
+        // Permanently failed (MAX_RETRIES exhausted). Mark it so the panel
+        // renders the failure card next time the user opens the slide.
+        slideData[idx].failed = true;
+        slideData[idx].pending = false;
+        slideData[idx].isLoading = false;
+        if (slideData[idx] === slideData[currentSlideIndex]) {
+            updateSlideSummary(slideData[idx]);
         }
     }
     lastKnownSummaryState[slideNum] = state.summary;
@@ -889,29 +800,83 @@ function updateSlideImage(slide) {
     }
 }
 
-// Separate function to handle summary streaming and updates
+// Render the summary panel for `slide`. This function is STRICTLY
+// display-from-state. It does not open network connections. The background
+// pipeline generates summaries; the /processing_status poll + the
+// summary fetcher (fetchCachedSummaryFor) feed slide.summary. The only time
+// we open /stream_summary is when the user explicitly clicks Regenerate.
 function updateSlideSummary(slide) {
-    // Set the title immediately
     slideTitle.textContent = slide.title || `Slide ${slide.slideNumber}`;
-    
-    // If we already have a cached summary, show it immediately
-    if (slide.summary && slide.summary !== "Loading summary...") {
+
+    // Kill any prior EventSource (e.g. a Regenerate still running) so its
+    // late events can't overwrite the panel we're about to paint.
+    closeActiveSummaryStream();
+
+    const hasRealSummary = slide.summary
+        && slide.summary !== "Loading summary..."
+        && !slide.summary.startsWith("**Basic Summary**");
+
+    if (hasRealSummary) {
         displaySummaryWithStreaming(slide.summary, slideSummary);
         return;
     }
-    
-    // Show loading state
+
+    if (slide.failed) {
+        slideSummary.innerHTML = `
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                This slide's summary couldn't be generated.
+                Click <strong>Regenerate</strong> to try again.
+            </div>`;
+        return;
+    }
+
+    // Default: still processing. The status poll will flip the tile to done
+    // and fetchCachedSummaryFor() will repaint this panel once the summary
+    // lands in the cache.
     slideSummary.innerHTML = `
         <div class="text-center p-4">
             <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Loading...</span>
+                <span class="visually-hidden">Loading…</span>
             </div>
-            <p class="mt-3">Generating summary...</p>
-        </div>
-    `;
-    
-    // Stream the summary
-    streamSummary(slide.slideNumber);
+            <p class="mt-3">Processing slide ${slide.slideNumber}…
+                <br><small class="text-muted">Summaries appear automatically as the pipeline finishes each slide.</small>
+            </p>
+        </div>`;
+}
+
+// Pull whatever cached summary the server has for these slide numbers and
+// merge into slideData. Does NOT trigger generation — /get_summaries is now
+// cache-only. Returns the set of slide numbers that were populated.
+async function fetchCachedSummariesFor(slideNums) {
+    if (!sessionId || !slideNums || !slideNums.length) return [];
+    const populated = [];
+    try {
+        const url = `/get_summaries?session_id=${sessionId}`
+            + `&slide_nums=${slideNums.join(',')}&force_regenerate=false`;
+        const r = await fetch(url);
+        if (!r.ok) return [];
+        const data = await r.json();
+        for (const [k, summary] of Object.entries(data)) {
+            if (k === '_pending') continue;
+            const num = parseInt(k, 10);
+            const idx = slideData.findIndex(s => s.slideNumber === num);
+            if (idx === -1) continue;
+            slideData[idx].summary = summary;
+            slideData[idx].isLoading = false;
+            slideData[idx].pending = false;
+            slideData[idx].failed = false;
+            populated.push(num);
+        }
+        // If the currently-viewed slide just got a fresh summary, repaint it.
+        const current = slideData[currentSlideIndex];
+        if (current && populated.includes(current.slideNumber)) {
+            updateSlideSummary(current);
+        }
+    } catch (e) {
+        console.warn('fetchCachedSummariesFor failed', e);
+    }
+    return populated;
 }
 
 // Function to stream summary for a specific slide
