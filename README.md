@@ -11,6 +11,7 @@ When deploying to Google Cloud Run, the following environment variables need to 
 | `SECRET_KEY` | Secret key for Flask sessions (should be a random string) | Yes |
 | `APP_BASE_URL` | Base URL of your application (e.g., https://your-app-name.run.app) | Yes |
 | `PRODUCTION` | Set to "true" to enable production settings | Yes |
+| `NVIDIA_API_KEY` | API key for NVIDIA NIM (https://build.nvidia.com/) used for AI inference | Yes |
 
 ### Steps to obtain Google OAuth credentials:
 

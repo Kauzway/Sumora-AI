@@ -15,7 +15,9 @@ import requests
 import json
 import re
 from openai import OpenAI
-from groq import Groq  # Import Groq client
+
+# NVIDIA NIM API is OpenAI-compatible; the OpenAI client is reused with a custom base_url.
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 # Add imports for RAG model approach
 from sentence_transformers import SentenceTransformer
 import numpy as np
@@ -137,10 +139,12 @@ except NameError:
 # Load environment variables right after imports, before any code execution
 load_dotenv()  # Take environment variables from .env file
 
-# Rate limiting configuration for Groq API
-RATE_LIMIT_RPM = 1800  # Requests per minute (for llama-3.1-8b-instant)
-RATE_LIMIT_RPD = 900000  # Requests per day (for llama-3.1-8b-instant)
-RATE_LIMIT_TPM = 450000  # Tokens per minute (for llama-3.1-8b-instant)
+# Rate limiting configuration for NVIDIA NIM API
+# NVIDIA NIM documented public limit is 40 requests/minute; daily and token caps
+# are derived conservatively from that ceiling.
+RATE_LIMIT_RPM = 40       # Requests per minute (NVIDIA NIM public tier)
+RATE_LIMIT_RPD = 10000    # Requests per day (conservative daily cap)
+RATE_LIMIT_TPM = 40000    # Tokens per minute (~1000 tokens per request headroom)
 
 # Rate limiting tracking
 api_calls_minute = deque(maxlen=RATE_LIMIT_RPM)  # Track timestamps of calls in the last minute
@@ -246,21 +250,21 @@ def record_token_usage(prompt_tokens, completion_tokens):
         # Record token usage for this minute
         tokens_minute.append(prompt_tokens + completion_tokens)
 
-# Configure Groq API for models
-groq_api_key = os.environ.get("GROQ_API_KEY")
+# Configure NVIDIA NIM API for models
+groq_api_key = os.environ.get("NVIDIA_API_KEY")
 if not groq_api_key:
-    print("⚠️ WARNING: No Groq API key found in environment variables")
-    print("Set your GROQ_API_KEY environment variable for AI functionality to work")
+    print("⚠️ WARNING: No NVIDIA API key found in environment variables")
+    print("Set your NVIDIA_API_KEY environment variable for AI functionality to work")
     groq_api_key = ""  # Empty string instead of hardcoded key
 
-# Initialize Groq client - will be initialized properly when API key is available
+# Initialize NVIDIA NIM client - will be initialized properly when API key is available
 client = None
 if groq_api_key:
-    client = Groq(api_key=groq_api_key)
-    print("✅ Groq client initialized successfully")
+    client = OpenAI(api_key=groq_api_key, base_url=NVIDIA_BASE_URL)
+    print("✅ NVIDIA NIM client initialized successfully")
 
-# Model configuration - use Llama 3.1 8B model
-groq_model = "llama-3.1-8b-instant"  # The Groq model name
+# Model configuration - use NVIDIA-hosted Gemma model
+groq_model = "google/gemma-4-31b-it"  # The NVIDIA NIM model name
 
 # Variable to track if Groq API is available
 groq_available = True
@@ -834,7 +838,7 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
         print(f"\n=== Starting Groq summary generation for slide {slide_num} ===")
         
         # Get the API key directly
-        api_key = os.environ.get("GROQ_API_KEY", "")
+        api_key = os.environ.get("NVIDIA_API_KEY", "")
         
         # Check if API key is available
         if not api_key:
@@ -849,7 +853,7 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
         try:
             # Create the client
             print("Creating Groq client")
-            client = Groq(api_key=api_key)
+            client = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
             
             # Check if this slide contains OCR-extracted text
             has_ocr = "[OCR-extracted text:]" in slide_text
@@ -890,7 +894,7 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
                 try:
                     # Create streaming call with timeout
                     stream = client.chat.completions.create(
-                        model="llama-3.1-8b-instant",
+                        model="google/gemma-4-31b-it",
                         messages=messages,
                         temperature=0.3,
                         max_tokens=500,
@@ -934,7 +938,7 @@ def generate_groq_summary(slide_text, slide_num, streaming=True):
                 try:
                     print(f"Making Groq API non-streaming call for slide {slide_num}")
                     response = client.chat.completions.create(
-                        model="llama-3.1-8b-instant",
+                        model="google/gemma-4-31b-it",
                         messages=messages,
                         temperature=0.3,
                         max_tokens=500,
@@ -1256,7 +1260,7 @@ For code-related questions:
         messages.append({"role": "user", "content": user_message + "\n\nCRITICAL: Provide ONLY the direct answer with NO explanation of your thought process. Do not mention how you arrived at the answer."})
         
         # Get the API key directly
-        api_key = os.environ.get("GROQ_API_KEY", "")
+        api_key = os.environ.get("NVIDIA_API_KEY", "")
         
         # Check if API key is available
         if not api_key:
@@ -1276,7 +1280,7 @@ For code-related questions:
         try:
             # Create the client
             print("Creating Groq client for chat")
-            client = Groq(api_key=api_key)
+            client = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
             
             # Estimate token count for the request (rough estimation using 4 chars per token)
             base_tokens = 150  # For system message
@@ -1291,7 +1295,7 @@ For code-related questions:
             try:
                 print("Making Groq API call for chat response")
                 completion = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model="google/gemma-4-31b-it",
                     messages=messages,
                     temperature=0.1,  # Very low temperature for more focused responses
                     max_tokens=500,  # Reduced from 700 to save tokens
@@ -2241,7 +2245,7 @@ def generate_presentation_overview(session_id):
     key_content = "\n\n".join(key_content_parts)
     
     # Get the API key directly
-    api_key = os.environ.get("GROQ_API_KEY", "")
+    api_key = os.environ.get("NVIDIA_API_KEY", "")
     
     # Check if API key is available
     if not api_key:
@@ -2277,13 +2281,13 @@ Format:
         try:
             # Create the client
             print("Creating Groq client for overview")
-            client = Groq(api_key=api_key)
+            client = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
             
             try:
                 # API call with minimal tokens and timeout
                 print("Making Groq API call for presentation overview")
                 response = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model="google/gemma-4-31b-it",
                     messages=messages,
                     temperature=0.1,
                     max_tokens=250,  # Minimal tokens for an overview
