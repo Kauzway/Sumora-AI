@@ -181,14 +181,18 @@ if groq_api_key:
     print("✅ NVIDIA NIM client initialized successfully")
 
 # Model configuration - use NVIDIA-hosted Gemma model
-groq_model = "google/gemma-4-31b-it"  # The NVIDIA NIM model name
+groq_model = os.environ.get("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b")
 
 # Variable to track if NVIDIA NIM is available (keeping the legacy name to
 # avoid touching every call site — it's just a module-local flag now).
 groq_available = True
 
 # Vision + batching configuration for the NVIDIA NIM pipeline.
-VISION_MODEL = "google/gemma-4-31b-it"  # Same NIM endpoint; it handles text+image messages.
+# The NIM model used for both vision transcription and summary/chat generation.
+# Qwen 3.5-122B-A10B is a sparse MoE (10B activated) multimodal model — it
+# handles slide images, long context (262K), and reasoning. Overridable via
+# env var so the model can be swapped without redeploying.
+VISION_MODEL = os.environ.get("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b")
 PROCESSING_BATCH_SIZE = 5                # Slides processed per batch.
 # A batch of 5 concurrent calls takes ~30-60s for vision, so we are already
 # well under 40 RPM without any pause. 2s is just a courtesy gap to avoid
@@ -440,8 +444,15 @@ def load_embedding_model():
     if embedding_model is None:
         print(f"Loading embedding model: {EMBEDDING_MODEL}")
         try:
-            # Load the model with half precision if available (saves memory)
-            embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+            # Explicit cache_folder so the model is loaded from the baked-in
+            # /opt/hf-cache shipped in the Docker image. Avoids HuggingFace
+            # rate-limit HTTP 429s on first use in production.
+            cache_folder = os.environ.get("SENTENCE_TRANSFORMERS_HOME") \
+                or os.environ.get("HF_HOME")
+            embedding_model = SentenceTransformer(
+                EMBEDDING_MODEL,
+                cache_folder=cache_folder,
+            )
             if use_half_precision and torch.cuda.is_available():
                 embedding_model.half()  # Convert to FP16
                 print("Using half precision (FP16) for embedding model")
@@ -993,8 +1004,12 @@ def generate_groq_summary(slide_text, slide_num, streaming=True,
                         delta = getattr(choice, "delta", None)
                         if delta is None:
                             continue
-                        content = (getattr(delta, "content", None)
-                                   or getattr(delta, "reasoning_content", None))
+                        # Stream ONLY delta.content. Reasoning models (Qwen,
+                        # etc.) emit delta.reasoning_content during their
+                        # thinking phase; streaming those chunks would leak
+                        # the internal chain-of-thought into the user's
+                        # summary. The final answer always lands in content.
+                        content = getattr(delta, "content", None)
                         if content:
                             yield content
                 except Exception as stream_error:

@@ -1,6 +1,11 @@
 # syntax=docker/dockerfile:1.6
 
 # ---------- Builder stage ----------
+# Strategy: install torch from the CPU-only index FIRST, then install the rest
+# of the requirements. Once torch is already present in the interpreter, pip's
+# resolver accepts it as satisfied and does not re-download the CUDA build
+# that PyPI serves as "torch". The previous wheel-based approach kept letting
+# the CUDA wheel sneak in as a transitive dep of sentence-transformers.
 FROM python:3.11-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
@@ -14,36 +19,42 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /wheels
+WORKDIR /build
 COPY requirements.txt .
 
-# Keep torch out of the requirements pass so pip cannot pull the ~800 MB
-# CUDA wheel from PyPI — we want the CPU wheel only.
-RUN grep -v -i '^torch' requirements.txt > requirements-no-torch.txt && \
-    pip install --upgrade pip && \
-    pip wheel --wheel-dir /wheels \
-        --index-url https://download.pytorch.org/whl/cpu \
-        "torch>=1.9.0" && \
-    pip wheel --wheel-dir /wheels -r requirements-no-torch.txt && \
-    pip wheel --wheel-dir /wheels gunicorn
+# 1. CPU-only torch. The dedicated index hosts torch+cpu wheels exclusively.
+# 2. Everything else. Pip sees torch is installed and accepts it as satisfying
+#    sentence-transformers' torch>=1.11 constraint — no CUDA torch pulled.
+RUN pip install --upgrade pip && \
+    pip install --index-url https://download.pytorch.org/whl/cpu "torch>=1.9.0" && \
+    pip install -r requirements.txt gunicorn
+
+# Pre-download the sentence-transformers embedding model at build time. This
+# bakes it into the image so the running container never hits HuggingFace at
+# first-use (which was throwing 429 in production). ~90 MB on disk.
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/opt/hf-cache')"
+
+# Trim the fat before copying site-packages forward: no __pycache__, no test
+# suites, no .pyc. Saves tens of MB.
+RUN find /usr/local/lib/python3.11 -type d \( -name '__pycache__' -o -name 'tests' -o -name 'test' \) -prune -exec rm -rf {} + && \
+    find /usr/local/lib/python3.11 -name '*.pyc' -delete
 
 # ---------- Runtime stage ----------
 FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PRODUCTION=true
+    PRODUCTION=true \
+    HF_HOME=/opt/hf-cache \
+    SENTENCE_TRANSFORMERS_HOME=/opt/hf-cache
+# Note: NOT setting HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE so that the occasional
+# metadata check can still fall back to the network — the actual model weights
+# are already on disk from the builder stage, so no full download ever runs.
 
-# Runtime deps:
-# - libreoffice-impress (pulls libreoffice-core) converts PPTX/PPT -> PDF so the
-#   vision pipeline can render slides to images. Heavier than Tesseract, but it
-#   replaces both OCR and every non-PDF parser.
-# - poppler-utils: kept in case PDF utilities are needed downstream.
-# - libopenblas0: runtime for numpy/faiss/torch.
-# - fonts-liberation + fonts-dejavu: reasonable default typography for the
-#   LibreOffice render so PPTX output doesn't fall back to ugly substitutes.
+# Runtime deps only — no compilers, no dev headers.
+# libreoffice-impress + core handles PPTX/PPT -> PDF at upload time.
+# libopenblas0 is the shared lib numpy/faiss/torch link against at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-impress \
     libreoffice-core \
@@ -53,18 +64,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenblas0 \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
+# Bring Python packages and the gunicorn launcher from the builder. No pip in
+# the runtime stage — everything is already installed to site-packages.
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin/gunicorn /usr/local/bin/gunicorn
+COPY --from=builder /opt/hf-cache /opt/hf-cache
+
 WORKDIR /app
-
-COPY --from=builder /wheels /wheels
-COPY requirements.txt .
-RUN grep -v -i '^torch' requirements.txt > requirements-no-torch.txt && \
-    pip install --no-index --find-links=/wheels "torch>=1.9.0" && \
-    pip install --no-index --find-links=/wheels \
-        -r requirements-no-torch.txt gunicorn && \
-    rm -rf /wheels /root/.cache requirements-no-torch.txt && \
-    find /usr/local/lib/python3.11 -type d -name '__pycache__' -prune -exec rm -rf {} + && \
-    find /usr/local/lib/python3.11 -type d -name 'tests' -prune -exec rm -rf {} +
-
 COPY . .
 
 RUN chmod +x /app/entrypoint.sh && \
