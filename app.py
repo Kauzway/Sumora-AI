@@ -446,6 +446,10 @@ faiss_indices = {}
 slide_chunks = {}
 # Dictionary to store slide mapping (chunk_id -> slide_num) for each session
 chunk_to_slide_map = {}
+# Per-session lock + generation counter so concurrent re-index requests
+# collapse into a single trailing rebuild instead of stacking up.
+_reindex_locks: Dict[str, threading.Lock] = {}
+_reindex_pending: Dict[str, int] = {}
 
 def load_embedding_model():
     """Load the embedding model once and keep it in memory"""
@@ -615,6 +619,51 @@ def create_slide_embeddings(session_id: str, slide_texts: Dict[str, str]):
     except Exception as e:
         print(f"Error creating FAISS index: {str(e)}")
         return False
+
+_reindex_state_lock = threading.Lock()
+_reindex_workers: Dict[str, bool] = {}  # session_id -> True while a worker is running
+
+def schedule_reindex(session_id: str):
+    """Non-blocking wrapper around create_slide_embeddings.
+
+    The embedding model (Qwen3-Embedding-0.6B in particular) can take tens of
+    seconds on CPU for both model load and encoding. If we called
+    create_slide_embeddings synchronously inside the transcription loop it
+    would stall the next batch of slides — which is exactly what the logs
+    showed.
+
+    Design: at most one re-index worker per session. Callers bump a pending
+    counter; if no worker is active we spawn one. The worker loops, consuming
+    the counter, so multiple requests arriving during a long rebuild collapse
+    into a single trailing rebuild (not N stacked rebuilds).
+    """
+    with _reindex_state_lock:
+        _reindex_pending[session_id] = _reindex_pending.get(session_id, 0) + 1
+        if _reindex_workers.get(session_id):
+            return  # a worker is already running; it'll pick up our bump
+        _reindex_workers[session_id] = True
+
+    def _runner():
+        try:
+            while True:
+                with _reindex_state_lock:
+                    pending = _reindex_pending.get(session_id, 0)
+                    _reindex_pending[session_id] = 0
+                if pending <= 0:
+                    return
+                try:
+                    create_slide_embeddings(
+                        session_id,
+                        slide_contents_structured.get(session_id, {}),
+                    )
+                except Exception as e:
+                    print(f"[{session_id[:8]}] background reindex failed: {e}")
+        finally:
+            with _reindex_state_lock:
+                _reindex_workers[session_id] = False
+
+    threading.Thread(target=_runner, daemon=True).start()
+
 
 MIN_COSINE_SIMILARITY = 0.25  # below this the match is semantic noise
 
@@ -2416,10 +2465,10 @@ def process_session_background(session_id):
             _update_slide_state(session_id, n, transcription="processing")
         fails = _run_transcription_batch(session_id, image_paths_by_slide, batch)
         failed_transcribe.extend(fails)
-        try:
-            create_slide_embeddings(session_id, slide_contents_structured.get(session_id, {}))
-        except Exception as re_err:
-            print(f"[{session_id[:8]}] incremental RAG reindex failed: {re_err}")
+        # Re-index on a background worker so the next transcription batch is
+        # NOT blocked by embedding-model load/encode (which can take tens of
+        # seconds on CPU with Qwen3-Embedding-0.6B).
+        schedule_reindex(session_id)
         # Fire-and-forget summary generation for the slides that transcribed
         # successfully in this batch. Rest of the pipeline continues
         # transcribing the next batch in parallel.
@@ -2448,10 +2497,7 @@ def process_session_background(session_id):
                                     retries=retry_round)
             fails = _run_transcription_batch(session_id, image_paths_by_slide, group)
             next_pending.extend(fails)
-            try:
-                create_slide_embeddings(session_id, slide_contents_structured.get(session_id, {}))
-            except Exception as re_err:
-                print(f"[{session_id[:8]}] retry RAG reindex failed: {re_err}")
+            schedule_reindex(session_id)
             # Summarize any slides that were recovered in this retry group.
             t = _kick_summary_batch(group)
             if t:
