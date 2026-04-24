@@ -7,6 +7,19 @@ let isDarkMode = false; // Track dark mode state
 let isSummaryLoading = false; // Track if summaries are being loaded
 let summaryLoadingTimers = {}; // For token streaming simulation
 
+// Exactly one /stream_summary EventSource is allowed to write into the
+// summary panel at a time. Tracking it fixes the bleed-through where a stale
+// stream for slide N would overwrite the panel currently displaying slide M.
+let activeSummaryES = null;
+let activeSummarySlideNum = null;
+function closeActiveSummaryStream() {
+    if (activeSummaryES) {
+        try { activeSummaryES.close(); } catch (_) { /* ignore */ }
+        activeSummaryES = null;
+    }
+    activeSummarySlideNum = null;
+}
+
 // DOM elements
 const uploadForm = document.getElementById('upload-form');
 const uploadStatus = document.getElementById('upload-status');
@@ -481,6 +494,11 @@ function ensureProcessingBanner() {
     return processingBanner;
 }
 
+// Track the summary state the poll last observed, per slide, so we can detect
+// transitions — specifically "pending -> done" on the currently viewed slide,
+// which should auto-refresh its summary display.
+const lastKnownSummaryState = {};
+
 function applySlideStatus(slideNum, state) {
     // state: { transcription, summary, retries, error }
     const container = document.getElementById('slide-thumbnails');
@@ -503,6 +521,20 @@ function applySlideStatus(slideNum, state) {
         stateClass = 'state-processing'; // transcribed, waiting on summary
     }
     tile.classList.add(stateClass);
+
+    // If this slide just transitioned to summary:done AND the user is
+    // currently viewing it, trigger a stream to pull the cached summary
+    // into the panel — otherwise the user has to manually re-click.
+    const prev = lastKnownSummaryState[slideNum];
+    if (state.summary === 'done' && prev !== 'done') {
+        const current = slideData[currentSlideIndex];
+        if (current && parseInt(slideNum, 10) === current.slideNumber) {
+            // Re-fetch via /stream_summary (served from cache), without
+            // forcing regeneration. This also re-typesets math.
+            streamSummary(current.slideNumber, false);
+        }
+    }
+    lastKnownSummaryState[slideNum] = state.summary;
 
     // Refresh hover tooltip so users can debug stuck slides.
     tile.title = `Slide ${slideNum} — transcription: ${state.transcription}, summary: ${state.summary}`
@@ -733,8 +765,9 @@ function displaySummaryWithStreaming(summary, elementToUpdate) {
     
     const timer = setInterval(() => {
         if (displayedLength >= textContent.length) {
-            // If we're done, show the full formatted content
+            // If we're done, show the full formatted content + typeset math
             elementToUpdate.innerHTML = fullContent;
+            typesetMathIn(elementToUpdate);
             clearInterval(timer);
         } else {
             // Increment the displayed length
@@ -887,11 +920,14 @@ function streamSummary(slideNumber, forceRegenerate = false) {
         console.error("No session ID available");
         return;
     }
-    
-    // Track loading state
+
+    // Kill any previous stream (from a different slide OR a prior attempt at
+    // this slide) before opening a new one. Without this, late events from an
+    // older EventSource overwrite the panel currently showing a different
+    // slide's summary.
+    closeActiveSummaryStream();
+
     isSummaryLoading = true;
-    
-    // Show loading state
     slideSummary.innerHTML = `
         <div class="text-center p-4">
             <div class="spinner-border text-primary" role="status">
@@ -900,30 +936,38 @@ function streamSummary(slideNumber, forceRegenerate = false) {
             <p class="mt-3">Generating summary for slide ${slideNumber}...</p>
         </div>
     `;
-    
-    // Update UI to show generating state
+
     const regenerateBtn = document.getElementById('regenerate-summary');
     if (regenerateBtn) {
         regenerateBtn.disabled = true;
         regenerateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
     }
-    
-    // Reset the summary text
+
+    // Capture the slide number this stream belongs to. Every handler below
+    // refuses to touch the DOM unless it still matches activeSummarySlideNum,
+    // guaranteeing no cross-slide bleed.
+    const thisSlide = slideNumber;
     let summaryText = "";
     let isStreamComplete = false;
     let streamTimeout = null;
-    
-    // Create a new EventSource for server-sent events
+
     console.log(`Creating EventSource for slide ${slideNumber}, force_regenerate=${forceRegenerate}`);
     const eventSource = new EventSource(
-        `/stream_summary?session_id=${sessionId}&slide_num=${slideNumber}` + 
+        `/stream_summary?session_id=${sessionId}&slide_num=${slideNumber}` +
         (forceRegenerate ? '&force_regenerate=true' : '')
     );
+    activeSummaryES = eventSource;
+    activeSummarySlideNum = thisSlide;
+
+    // Guard: returns false if this stream is no longer the active one. Every
+    // handler should bail early when that's the case.
+    const isStillActive = () => activeSummaryES === eventSource && activeSummarySlideNum === thisSlide;
     
     // Initial watchdog: 60s before we give up on a stalled stream. The
     // progress/chunk handlers reset this clock, so normal long transcriptions
     // don't trip it as long as the server keeps sending events.
     streamTimeout = setTimeout(() => {
+        if (!isStillActive()) return;
         console.warn(`Stream stalled without events for slide ${slideNumber}`);
         if (!isStreamComplete) {
             eventSource.close();
@@ -980,27 +1024,22 @@ function streamSummary(slideNumber, forceRegenerate = false) {
         console.log(`EventSource connection opened for slide ${slideNumber}`);
     });
     
-    // Handle title events
+    // Every handler checks isStillActive() first — any event arriving after
+    // the user navigated to a different slide (or after a newer stream for
+    // this slide opened) is dropped on the floor, not rendered.
+
     eventSource.addEventListener('title', function(e) {
-        console.log(`Received title for slide ${slideNumber}: ${e.data}`);
+        if (!isStillActive()) return;
         slideTitle.textContent = e.data;
-        
-        // Update the slide data
-        const slideIndex = slideData.findIndex(s => s.slideNumber === slideNumber);
-        if (slideIndex !== -1) {
-            slideData[slideIndex].title = e.data;
-        }
+        const slideIndex = slideData.findIndex(s => s.slideNumber === thisSlide);
+        if (slideIndex !== -1) slideData[slideIndex].title = e.data;
     });
-    
-    // Handle progress events. These fire during "Transcribing slide N..." and
-    // similar waiting phases, so we also reset the stream watchdog to avoid
-    // timing out a slow-but-progressing request.
+
     eventSource.addEventListener('progress', function(e) {
-        console.log(`Progress update for slide ${slideNumber}: ${e.data}`);
+        if (!isStillActive()) return;
         clearTimeout(streamTimeout);
         streamTimeout = setTimeout(() => {
-            console.warn(`Stream timeout (no progress) for slide ${slideNumber}`);
-            if (!isStreamComplete) eventSource.close();
+            if (!isStreamComplete && isStillActive()) eventSource.close();
         }, 60000);
         slideSummary.innerHTML = `
             <div class="text-center">
@@ -1011,169 +1050,119 @@ function streamSummary(slideNumber, forceRegenerate = false) {
             </div>
         `;
     });
-    
-    // Handle content chunks
+
     eventSource.addEventListener('chunk', function(e) {
-        // Reset the timeout on each chunk
+        if (!isStillActive()) return;
         clearTimeout(streamTimeout);
         streamTimeout = setTimeout(() => {
-            console.warn(`Stream timeout after inactivity for slide ${slideNumber}`);
-            if (!isStreamComplete) {
+            if (!isStreamComplete && isStillActive()) {
                 eventSource.close();
-                
-                // If we have a substantial summary, use it
                 if (summaryText && summaryText.length > 50) {
-                    console.log(`Using partial summary after timeout for slide ${slideNumber}`);
-                    
-                    // Update the slide data with the partial summary
-                    const slideIndex = slideData.findIndex(s => s.slideNumber === slideNumber);
+                    const slideIndex = slideData.findIndex(s => s.slideNumber === thisSlide);
                     if (slideIndex !== -1) {
                         slideData[slideIndex].summary = summaryText;
                         slideData[slideIndex].isLoading = false;
                     }
-                    
-                    // Add a note about being cut off
-                    slideSummary.innerHTML = renderMarkdown(summaryText);
-                    slideSummary.innerHTML += `
-                        <div class="alert alert-info mt-3">
+                    slideSummary.innerHTML = renderMarkdown(summaryText) +
+                        `<div class="alert alert-info mt-3">
                             <i class="fas fa-info-circle me-2"></i>
                             Note: The summary was cut off. You can click "Regenerate" to try again.
-                        </div>
-                    `;
+                        </div>`;
+                    typesetMathIn(slideSummary);
                 }
-                
-                // Reset button states
                 if (regenerateBtn) {
                     regenerateBtn.disabled = false;
                     regenerateBtn.innerHTML = '<i class="fas fa-redo-alt"></i> Regenerate';
                 }
-                
-                // Reset loading flag
                 isSummaryLoading = false;
             }
-        }, 10000);
-        
-        if (summaryText === "") {
-            // Clear the loading indicator on first chunk
-            slideSummary.innerHTML = "";
-        }
-        
-        // Append the new chunk
+        }, 15000);
+
+        if (summaryText === "") slideSummary.innerHTML = "";
         summaryText += e.data;
-        
-        // Update the display
         slideSummary.innerHTML = renderMarkdown(summaryText);
     });
-    
-    // Handle complete summary
+
     eventSource.addEventListener('summary', function(e) {
-        console.log(`Received complete summary for slide ${slideNumber}`);
-        // This is used for non-streaming summaries (fallback)
+        if (!isStillActive()) return;
         summaryText = e.data;
         slideSummary.innerHTML = renderMarkdown(summaryText);
-        
-        // Update the slide data
-        const slideIndex = slideData.findIndex(s => s.slideNumber === slideNumber);
+        typesetMathIn(slideSummary);
+        const slideIndex = slideData.findIndex(s => s.slideNumber === thisSlide);
         if (slideIndex !== -1) {
             slideData[slideIndex].summary = summaryText;
             slideData[slideIndex].isLoading = false;
         }
     });
-    
-    // Handle completion
+
     eventSource.addEventListener('done', function(e) {
-        console.log(`Summary streaming complete for slide ${slideNumber}`);
+        if (!isStillActive()) return;
         isStreamComplete = true;
-        
-        // Clear any pending timeouts
         clearTimeout(streamTimeout);
-        
-        // Close the connection
         eventSource.close();
-        
-        // Update the slide data
+        // Render math on the final composed output.
+        typesetMathIn(slideSummary);
+
         if (summaryText) {
-            const slideIndex = slideData.findIndex(s => s.slideNumber === slideNumber);
+            const slideIndex = slideData.findIndex(s => s.slideNumber === thisSlide);
             if (slideIndex !== -1) {
                 slideData[slideIndex].summary = summaryText;
                 slideData[slideIndex].isLoading = false;
             }
         }
-        
-        // Reset loading state for regenerate button if it exists
         if (regenerateBtn) {
             regenerateBtn.disabled = false;
             regenerateBtn.innerHTML = '<i class="fas fa-redo-alt"></i> Regenerate';
         }
-        
-        // Reset loading flag
         isSummaryLoading = false;
+        if (activeSummaryES === eventSource) {
+            activeSummaryES = null;
+            activeSummarySlideNum = null;
+        }
     });
     
-    // Handle errors
     eventSource.addEventListener('error', function(e) {
+        // An error after the user moved on shouldn't rewrite the panel they're
+        // now looking at. Silently drain and clean up.
+        if (!isStillActive()) {
+            try { eventSource.close(); } catch (_) {}
+            return;
+        }
         console.error("Error streaming summary:", e);
-        
-        // Mark as complete to prevent timeout handlers
         isStreamComplete = true;
-        
-        // Clear any pending timeouts
         clearTimeout(streamTimeout);
-        
-        // Close the connection
         eventSource.close();
-        
-        // If we have partial content that's substantial, use it
+
         if (summaryText && summaryText.length > 50) {
-            console.log(`Using partial summary after error for slide ${slideNumber}`);
-            slideSummary.innerHTML = renderMarkdown(summaryText);
-            
-            // Update the slide data
-            const slideIndex = slideData.findIndex(s => s.slideNumber === slideNumber);
+            slideSummary.innerHTML = renderMarkdown(summaryText) +
+                `<div class="alert alert-warning mt-3">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    Note: An error occurred during summary generation. This partial summary may be incomplete.
+                </div>`;
+            typesetMathIn(slideSummary);
+            const slideIndex = slideData.findIndex(s => s.slideNumber === thisSlide);
             if (slideIndex !== -1) {
                 slideData[slideIndex].summary = summaryText;
                 slideData[slideIndex].isLoading = false;
             }
-            
-            // Add a note about the error
-            slideSummary.innerHTML += `
-                <div class="alert alert-warning mt-3">
-                    <i class="fas fa-exclamation-triangle me-2"></i>
-                    Note: An error occurred during summary generation. This partial summary may be incomplete.
-                </div>
-            `;
         } else {
-            // Show error in the summary panel
             slideSummary.innerHTML = `
                 <div class="alert alert-warning">
                     <i class="fas fa-exclamation-triangle me-2"></i>
-                    Error generating summary. Please try again later.
+                    Summary generation failed. Try clicking "Regenerate" — this slide may succeed on another attempt.
                 </div>
-                <p>Basic information about Slide ${slideNumber} will be shown instead.</p>
             `;
-            
-            // Update with basic information
-            const slideIndex = slideData.findIndex(s => s.slideNumber === slideNumber);
-            if (slideIndex !== -1) {
-                const basicSummary = `**Slide ${slideNumber}** - Basic information only. A detailed summary could not be generated.`;
-                slideData[slideIndex].summary = basicSummary;
-                slideData[slideIndex].isLoading = false;
-                
-                // Show the basic summary
-                setTimeout(() => {
-                    slideSummary.innerHTML = renderMarkdown(basicSummary);
-                }, 2000);
-            }
         }
-        
-        // Reset loading state for regenerate button if it exists
+
         if (regenerateBtn) {
             regenerateBtn.disabled = false;
             regenerateBtn.innerHTML = '<i class="fas fa-redo-alt"></i> Regenerate';
         }
-        
-        // Reset loading flag
         isSummaryLoading = false;
+        if (activeSummaryES === eventSource) {
+            activeSummaryES = null;
+            activeSummarySlideNum = null;
+        }
     });
 }
 
@@ -1388,32 +1377,54 @@ userInput.addEventListener('keypress', function(e) {
 addStreamingStyles();
 
 // Function to process markdown in text
+// Protect LaTeX delimiters ($...$ and $$...$$) from the markdown regexes below.
+// We stash each math segment in a placeholder, run markdown, then restore the
+// raw math. KaTeX's auto-render extension rescans the element afterward and
+// produces real math HTML — see typesetMathIn().
 function renderMarkdown(text) {
     if (!text) return '';
-    
-    // Process LaTeX formulas
-    // Inline formulas ($ $)
-    text = text.replace(/\$([^\$]+)\$/g, '<span class="latex-formula">$1</span>');
-    
-    // Block formulas ($$ $$)
-    text = text.replace(/\$\$([^\$]+)\$\$/g, '<div class="latex-formula-block">$1</div>');
-    
-    // Process bold text
+
+    const mathStash = [];
+    const stash = (content) => {
+        const idx = mathStash.length;
+        mathStash.push(content);
+        return `@@MATH${idx}@@`;
+    };
+    text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, body) => stash(`$$${body}$$`));
+    text = text.replace(/(^|[^\\])\$([^\n$]+?)\$/g,
+        (_, lead, body) => lead + stash(`$${body}$`));
+
+    // Bold / italic / code
     text = text.replace(/\*\*([^\*]+)\*\*/g, '<strong>$1</strong>');
-    
-    // Process italic text
     text = text.replace(/\*([^\*]+)\*/g, '<em>$1</em>');
-    
-    // Process code blocks
     text = text.replace(/```([^`]*)```/g, '<pre><code>$1</code></pre>');
-    
-    // Process inline code
     text = text.replace(/`([^`]*)`/g, '<code>$1</code>');
-    
-    // Replace newlines with <br>
     text = text.replace(/\n/g, '<br>');
-    
+
+    // Restore math placeholders AFTER markdown substitutions so the regex above
+    // doesn't mangle them.
+    text = text.replace(/@@MATH(\d+)@@/g, (_, i) => mathStash[parseInt(i, 10)] || '');
     return text;
+}
+
+// Run KaTeX auto-render on an element, if KaTeX is loaded. Safe to call on
+// already-rendered elements (idempotent).
+function typesetMathIn(element) {
+    if (!element || typeof window.renderMathInElement !== 'function') return;
+    try {
+        window.renderMathInElement(element, {
+            delimiters: [
+                { left: '$$', right: '$$', display: true  },
+                { left: '$',  right: '$',  display: false },
+                { left: '\\(', right: '\\)', display: false },
+                { left: '\\[', right: '\\]', display: true },
+            ],
+            throwOnError: false,
+            ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+        });
+    } catch (e) {
+        console.warn('KaTeX render failed', e);
+    }
 }
 
 // Find the displayChatResponse function and modify it to use renderMarkdown
@@ -1424,10 +1435,10 @@ function displayChatResponse(response, isStreaming = false) {
         // For streaming, update the last message
         let lastMessage = chatOutput.lastElementChild;
         if (lastMessage && lastMessage.classList.contains('bot-message')) {
-            // Replace the content with rendered markdown
-            lastMessage.querySelector('.message-content').innerHTML = renderMarkdown(response);
+            const contentEl = lastMessage.querySelector('.message-content');
+            contentEl.innerHTML = renderMarkdown(response);
+            typesetMathIn(contentEl);
         } else {
-            // Create a new message
             const messageElement = document.createElement('div');
             messageElement.className = 'message bot-message';
             messageElement.innerHTML = `
@@ -1437,9 +1448,9 @@ function displayChatResponse(response, isStreaming = false) {
                 <div class="message-content">${renderMarkdown(response)}</div>
             `;
             chatOutput.appendChild(messageElement);
+            typesetMathIn(messageElement);
         }
     } else {
-        // For non-streaming, create a new message
         const messageElement = document.createElement('div');
         messageElement.className = 'message bot-message';
         messageElement.innerHTML = `
@@ -1449,6 +1460,7 @@ function displayChatResponse(response, isStreaming = false) {
             <div class="message-content">${renderMarkdown(response)}</div>
         `;
         chatOutput.appendChild(messageElement);
+        typesetMathIn(messageElement);
     }
     
     // Scroll to the bottom

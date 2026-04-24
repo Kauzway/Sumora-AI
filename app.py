@@ -189,10 +189,15 @@ groq_available = True
 
 # Vision + batching configuration for the NVIDIA NIM pipeline.
 VISION_MODEL = "google/gemma-4-31b-it"  # Same NIM endpoint; it handles text+image messages.
-PROCESSING_BATCH_SIZE = 5                # Slides processed per batch (stays under 40 RPM).
-PROCESSING_BATCH_DELAY_SECONDS = 8.0     # Pause between batches — keeps worst-case under 40 RPM.
+PROCESSING_BATCH_SIZE = 5                # Slides processed per batch.
+# A batch of 5 concurrent calls takes ~30-60s for vision, so we are already
+# well under 40 RPM without any pause. 2s is just a courtesy gap to avoid
+# thundering-herd bursts on the NIM edge.
+PROCESSING_BATCH_DELAY_SECONDS = 2.0
 RETRY_BATCH_SIZE = 5                     # Retries are capped at 5 slides per group.
 MAX_RETRIES_PER_SLIDE = 2                # Each failed slide gets up to 2 retries.
+RETRY_BACKOFF_SECONDS = 6.0              # Wait between retry rounds so transient NIM
+                                         # rate-limit/capacity errors get a chance to clear.
 
 # Global dictionaries for storage
 slide_contents = {}  # Store slide content by session ID
@@ -383,7 +388,7 @@ VISION_TRANSCRIBE_USER = (
     "4. If the slide is almost blank (e.g. a divider), output a single short descriptive line."
 )
 
-def vision_transcribe_slide(img_path, slide_num, timeout=30.0):
+def vision_transcribe_slide(img_path, slide_num, timeout=90.0):
     """Transcribe a slide image via NVIDIA NIM vision. Returns transcription string.
     Raises on failure — the caller decides whether to retry."""
     api_key = os.environ.get("NVIDIA_API_KEY", "")
@@ -939,88 +944,82 @@ def generate_groq_summary(slide_text, slide_num, streaming=True,
             return iter([generate_basic_summary(slide_text, slide_num)])
         raise RuntimeError("NVIDIA_API_KEY not set")
 
-    import socket
-    original_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(5.0)
+    # IMPORTANT: do NOT set socket.setdefaulttimeout here. It is a process-wide
+    # default and was previously silently killing every in-flight NIM call
+    # happening on other threads (batch transcriptions, chat, etc.). The
+    # per-call `timeout=` on the OpenAI client is the right knob.
+    client_local = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
 
-    try:
-        client_local = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
+    context_block = ""
+    if neighbor_context:
+        context_block = (
+            "Context from adjacent slides (for optional cross-reference only — "
+            "do not summarize these):\n" + neighbor_context + "\n\n"
+        )
+    total_hint = f"Deck size: {total_slides} slides. " if total_slides else ""
+    user_message = (
+        f"{total_hint}Produce the summary for Slide {slide_num}.\n\n"
+        f"{context_block}"
+        f"Slide {slide_num} transcription:\n{slide_text}"
+    )
+    messages = [
+        {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
 
-        context_block = ""
-        if neighbor_context:
-            context_block = (
-                "Context from adjacent slides (for optional cross-reference only — "
-                "do not summarize these):\n" + neighbor_context + "\n\n"
+    if streaming:
+        print(f"NIM streaming summary call for slide {slide_num}")
+        try:
+            stream = client_local.chat.completions.create(
+                model=VISION_MODEL,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=400,
+                stream=True,
+                timeout=90.0,
             )
-        total_hint = f"Deck size: {total_slides} slides. " if total_slides else ""
-        user_message = (
-            f"{total_hint}Produce the summary for Slide {slide_num}.\n\n"
-            f"{context_block}"
-            f"Slide {slide_num} transcription:\n{slide_text}"
-        )
 
-        messages = [
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ]
+            def process_stream():
+                try:
+                    start_time = time.time()
+                    timeout_seconds = 90.0
+                    for chunk in stream:
+                        if time.time() - start_time > timeout_seconds:
+                            yield "<<<TIMEOUT_ERROR>>>"
+                            break
+                        if not getattr(chunk, "choices", None):
+                            continue
+                        choice = chunk.choices[0]
+                        delta = getattr(choice, "delta", None)
+                        if delta is None:
+                            continue
+                        content = (getattr(delta, "content", None)
+                                   or getattr(delta, "reasoning_content", None))
+                        if content:
+                            yield content
+                except Exception as stream_error:
+                    print(f"Error during streaming: {stream_error}")
+                    yield f"Error: {str(stream_error)}"
 
-        if streaming:
-            print(f"NIM streaming summary call for slide {slide_num}")
-            try:
-                stream = client_local.chat.completions.create(
-                    model=VISION_MODEL,
-                    messages=messages,
-                    temperature=0.3,
-                    max_tokens=400,
-                    stream=True,
-                    timeout=30.0,
-                )
-                    
-                def process_stream():
-                    try:
-                        start_time = time.time()
-                        timeout_seconds = 30.0
-                        for chunk in stream:
-                            if time.time() - start_time > timeout_seconds:
-                                yield "<<<TIMEOUT_ERROR>>>"
-                                break
-                            if not getattr(chunk, "choices", None):
-                                continue
-                            choice = chunk.choices[0]
-                            delta = getattr(choice, "delta", None)
-                            if delta is None:
-                                continue
-                            content = (getattr(delta, "content", None)
-                                       or getattr(delta, "reasoning_content", None))
-                            if content:
-                                yield content
-                    except Exception as stream_error:
-                        print(f"Error during streaming: {stream_error}")
-                        yield f"Error: {str(stream_error)}"
+            return process_stream()
+        except Exception as stream_error:
+            print(f"Streaming setup failed: {stream_error}; falling back to non-streaming")
+            # fall through to non-streaming
 
-                return process_stream()
+    response = client_local.chat.completions.create(
+        model=VISION_MODEL,
+        messages=messages,
+        temperature=0.3,
+        max_tokens=400,
+        timeout=90.0,
+    )
+    message = response.choices[0].message
+    summary = (getattr(message, "content", None)
+               or getattr(message, "reasoning_content", "")).strip()
+    if not summary:
+        raise RuntimeError(f"Empty summary from NIM for slide {slide_num}")
+    return summary
 
-            except Exception as stream_error:
-                print(f"Streaming setup failed: {stream_error}; falling back to non-streaming")
-                streaming = False
-
-        # Non-streaming path — raises on failure so the batch pipeline can retry.
-        response = client_local.chat.completions.create(
-            model=VISION_MODEL,
-            messages=messages,
-            temperature=0.3,
-            max_tokens=400,
-            timeout=30.0,
-        )
-        message = response.choices[0].message
-        summary = (getattr(message, "content", None)
-                   or getattr(message, "reasoning_content", "")).strip()
-        if not summary:
-            raise RuntimeError(f"Empty summary from NIM for slide {slide_num}")
-        return summary
-
-    finally:
-        socket.setdefaulttimeout(original_timeout)
 
 # Function to generate a more meaningful summary when API models are unavailable
 def generate_basic_summary(slide_text, slide_num):
@@ -1217,34 +1216,22 @@ HOW TO ANSWER
                 fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
             return fallback_msg
         
-        # Set a quick timeout for faster fallback if API is unresponsive
-        import socket
-        original_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(5.0)  # 5 second timeout
-        
+        # NOTE: we deliberately do not touch socket.setdefaulttimeout here.
+        # A process-wide socket default breaks every concurrent NIM call on
+        # other threads (batch pipeline, other chat requests). Per-call
+        # timeout below is enough.
         try:
-            # Create the client
-            print("Creating Groq client for chat")
+            print("Creating NVIDIA NIM client for chat")
             client = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
-            
-            # Estimate token count for the request (rough estimation using 4 chars per token)
-            base_tokens = 150  # For system message
-            context_tokens = len(context) // 4 if context else 0
-            user_tokens = len(user_message) // 4
-            est_prompt_tokens = base_tokens + context_tokens + user_tokens
-            est_completion_tokens = 300  # Estimate for completion
-            est_total_tokens = est_prompt_tokens + est_completion_tokens
-            
-            print(f"Estimated token usage for chat: {est_total_tokens} tokens")
-            
+
             try:
-                print("Making Groq API call for chat response")
+                print("Making NIM API call for chat response")
                 completion = client.chat.completions.create(
-                    model="google/gemma-4-31b-it",
+                    model=VISION_MODEL,
                     messages=messages,
-                    temperature=0.1,  # Very low temperature for more focused responses
-                    max_tokens=500,  # Reduced from 700 to save tokens
-                    timeout=8.0  # Set an explicit timeout for the API call
+                    temperature=0.1,
+                    max_tokens=700,
+                    timeout=60.0,
                 )
                 
                 # Extract content from the response with safer access
@@ -1318,24 +1305,13 @@ HOW TO ANSWER
                     fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
                 return fallback_msg
                 
-        except (socket.timeout, TimeoutError) as timeout_error:
-            print(f"Connection timed out while creating client: {str(timeout_error)}")
-            fallback_msg = "I'm sorry, but the AI service is not responding at the moment."
-            if relevant_slides:
-                fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
-            return fallback_msg
-            
         except Exception as e:
-            print(f"Error setting up Groq client: {str(e)}")
+            print(f"Error setting up NIM client: {str(e)}")
             fallback_msg = "I'm sorry, but there was a problem connecting to the AI service."
             if relevant_slides:
                 fallback_msg += f" Your question appears to be about slides: {', '.join([str(num) for num in relevant_slides])}"
             return fallback_msg
-            
-        finally:
-            # Restore original socket timeout
-            socket.setdefaulttimeout(original_timeout)
-                
+
     except Exception as e:
         print(f"Uncaught error in generate_groq_chat_response: {str(e)}")
         return f"I apologize, but I couldn't process your request. Error: {str(e)}"
@@ -2229,11 +2205,7 @@ def generate_presentation_overview(session_id):
         print("No Groq API key found, using local overview")
         return toc_overview
     
-    # Set a quick timeout for faster fallback if API is unresponsive
-    import socket
-    original_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(5.0)  # 5 second timeout
-    
+    # NOTE: no socket.setdefaulttimeout; see generate_groq_summary for rationale.
     try:
         # Create ultra-compact prompt for overview generation
         prompt = f"""
@@ -2261,14 +2233,13 @@ Format:
             client = OpenAI(api_key=api_key, base_url=NVIDIA_BASE_URL)
             
             try:
-                # API call with minimal tokens and timeout
-                print("Making Groq API call for presentation overview")
+                print("Making NIM API call for presentation overview")
                 response = client.chat.completions.create(
-                    model="google/gemma-4-31b-it",
+                    model=VISION_MODEL,
                     messages=messages,
                     temperature=0.1,
-                    max_tokens=250,  # Minimal tokens for an overview
-                    timeout=8.0  # Set an explicit timeout for the API call
+                    max_tokens=300,
+                    timeout=60.0,
                 )
                 
                 # Get overview content
@@ -2301,21 +2272,13 @@ Format:
                 print(f"API error in overview generation: {str(api_error)}")
                 return toc_overview
                 
-        except (socket.timeout, TimeoutError) as timeout_error:
-            print(f"Connection timed out while creating client: {str(timeout_error)}")
-            return toc_overview
-            
         except Exception as e:
-            print(f"Error setting up Groq client: {str(e)}")
+            print(f"Error setting up NIM client for overview: {str(e)}")
             return toc_overview
-            
+
     except Exception as e:
         print(f"Uncaught error in generate_presentation_overview: {str(e)}")
-        # Always return the fallback TOC if API call fails
         return toc_overview
-    finally:
-        # Restore original socket timeout
-        socket.setdefaulttimeout(original_timeout)
 
 # Add this function after the existing functions
 def _chunked(iterable, size):
@@ -2459,6 +2422,9 @@ def process_session_background(session_id):
         retry_round += 1
         _set_overall_state(session_id, "retrying")
         print(f"[{session_id[:8]}] transcription retry round {retry_round}: {pending}")
+        # Breathing room between retry rounds so transient NIM 5xx / rate
+        # limits have a chance to clear before we hammer the same slides.
+        time.sleep(RETRY_BACKOFF_SECONDS)
         next_pending = []
         for group in _chunked(pending, RETRY_BATCH_SIZE):
             for n in group:
@@ -2493,6 +2459,7 @@ def process_session_background(session_id):
         retry_round += 1
         _set_overall_state(session_id, "retrying")
         print(f"[{session_id[:8]}] summary retry round {retry_round}: {pending}")
+        time.sleep(RETRY_BACKOFF_SECONDS)
         next_pending = []
         for group in _chunked(pending, RETRY_BATCH_SIZE):
             for n in group:
