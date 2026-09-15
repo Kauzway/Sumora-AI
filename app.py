@@ -199,6 +199,11 @@ VISION_MODEL = os.environ.get("NVIDIA_MODEL", "meta/muse-glimmer-30b")
 # spends both the token budget and the wall-clock on chain of thought before
 # the answer starts — wasted on OCR-style transcription, and a real risk
 # against the per-call timeouts below. Tuned per task, overridable via env.
+# The model card recommends top_k=64 alongside temperature=1.0 / top_p=0.95.
+# top_k is not a first-class OpenAI SDK parameter, so it rides along in
+# extra_body; verified accepted by the hosted NIM endpoint.
+NIM_EXTRA_BODY = {"top_k": 64}
+
 REASONING_STRENGTH_TRANSCRIBE = os.environ.get("REASONING_STRENGTH_TRANSCRIBE", "low")
 REASONING_STRENGTH_SUMMARY = os.environ.get("REASONING_STRENGTH_SUMMARY", "medium")
 REASONING_STRENGTH_CHAT = os.environ.get("REASONING_STRENGTH_CHAT", "medium")
@@ -432,6 +437,7 @@ def vision_transcribe_slide(img_path, slide_num, timeout=90.0):
         temperature=1,
         top_p=0.95,
         max_tokens=8192,
+        extra_body=NIM_EXTRA_BODY,
         timeout=timeout,
     )
 
@@ -1103,6 +1109,7 @@ def generate_groq_summary(slide_text, slide_num, streaming=True,
                 temperature=1,
                 top_p=0.95,
                 max_tokens=8192,
+                extra_body=NIM_EXTRA_BODY,
                 stream=True,
                 timeout=90.0,
             )
@@ -1144,6 +1151,7 @@ def generate_groq_summary(slide_text, slide_num, streaming=True,
         temperature=1,
         top_p=0.95,
         max_tokens=8192,
+        extra_body=NIM_EXTRA_BODY,
         timeout=90.0,
     )
     message = response.choices[0].message
@@ -1381,6 +1389,7 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
                     temperature=1,
                     top_p=0.95,
                     max_tokens=8192,
+                    extra_body=NIM_EXTRA_BODY,
                     timeout=60.0,
                 )
                 
@@ -2309,6 +2318,7 @@ Format:
                     temperature=1,
                     top_p=0.95,
                     max_tokens=8192,
+                    extra_body=NIM_EXTRA_BODY,
                     timeout=60.0,
                 )
                 
