@@ -180,8 +180,8 @@ if groq_api_key:
     client = OpenAI(api_key=groq_api_key, base_url=NVIDIA_BASE_URL)
     print("✅ NVIDIA NIM client initialized successfully")
 
-# Model configuration - use NVIDIA-hosted Gemma model
-groq_model = os.environ.get("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b")
+# Model configuration - use NVIDIA-hosted OpenAI gpt-oss model
+groq_model = os.environ.get("NVIDIA_MODEL", "openai/gpt-oss-20b")
 
 # Variable to track if NVIDIA NIM is available (keeping the legacy name to
 # avoid touching every call site — it's just a module-local flag now).
@@ -189,10 +189,11 @@ groq_available = True
 
 # Vision + batching configuration for the NVIDIA NIM pipeline.
 # The NIM model used for both vision transcription and summary/chat generation.
-# Qwen 3.5-122B-A10B is a sparse MoE (10B activated) multimodal model — it
-# handles slide images, long context (262K), and reasoning. Overridable via
-# env var so the model can be swapped without redeploying.
-VISION_MODEL = os.environ.get("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b")
+# openai/gpt-oss-20b is an open-weight reasoning model served by NVIDIA NIM.
+# NOTE: it is TEXT-ONLY — it does not accept image_url content parts, so the
+# vision transcription path (vision_transcribe_slide) will fail against it.
+# Set NVIDIA_MODEL to a multimodal NIM endpoint if you need slide-image OCR.
+VISION_MODEL = os.environ.get("NVIDIA_MODEL", "openai/gpt-oss-20b")
 PROCESSING_BATCH_SIZE = 5                # Slides processed per batch.
 # A batch of 5 concurrent calls takes ~30-60s for vision, so we are already
 # well under 40 RPM without any pause. 2s is just a courtesy gap to avoid
@@ -411,8 +412,9 @@ def vision_transcribe_slide(img_path, slide_num, timeout=90.0):
                 {"type": "image_url", "image_url": {"url": data_url}},
             ]},
         ],
-        temperature=0.1,
-        max_tokens=1200,
+        temperature=1,
+        top_p=1,
+        max_tokens=4096,
         timeout=timeout,
     )
 
@@ -1076,8 +1078,9 @@ def generate_groq_summary(slide_text, slide_num, streaming=True,
             stream = client_local.chat.completions.create(
                 model=VISION_MODEL,
                 messages=messages,
-                temperature=0.3,
-                max_tokens=400,
+                temperature=1,
+                top_p=1,
+                max_tokens=4096,
                 stream=True,
                 timeout=90.0,
             )
@@ -1116,8 +1119,9 @@ def generate_groq_summary(slide_text, slide_num, streaming=True,
     response = client_local.chat.completions.create(
         model=VISION_MODEL,
         messages=messages,
-        temperature=0.3,
-        max_tokens=400,
+        temperature=1,
+        top_p=1,
+        max_tokens=4096,
         timeout=90.0,
     )
     message = response.choices[0].message
@@ -1347,8 +1351,9 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
                 completion = client.chat.completions.create(
                     model=VISION_MODEL,
                     messages=messages,
-                    temperature=0.1,
-                    max_tokens=700,
+                    temperature=1,
+                    top_p=1,
+                    max_tokens=4096,
                     timeout=60.0,
                 )
                 
@@ -2273,8 +2278,9 @@ Format:
                 response = client.chat.completions.create(
                     model=VISION_MODEL,
                     messages=messages,
-                    temperature=0.1,
-                    max_tokens=300,
+                    temperature=1,
+                    top_p=1,
+                    max_tokens=4096,
                     timeout=60.0,
                 )
                 

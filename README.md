@@ -12,7 +12,7 @@ When deploying to Google Cloud Run, the following environment variables need to 
 | `APP_BASE_URL` | Base URL of your application (e.g., https://your-app-name.run.app) | Yes |
 | `PRODUCTION` | Set to "true" to enable production settings | Yes |
 | `NVIDIA_API_KEY` | API key for NVIDIA NIM (https://build.nvidia.com/) used for AI inference and slide vision transcription | Yes |
-| `NVIDIA_MODEL` | NIM model ID. Must be a currently-live multimodal endpoint. Default: `qwen/qwen3.5-122b-a10b`. Browse live models at https://build.nvidia.com/explore/discover | No |
+| `NVIDIA_MODEL` | NIM model ID. Default: `openai/gpt-oss-20b` (text-only; use a multimodal endpoint for slide-image transcription). Browse live models at https://build.nvidia.com/explore/discover | No |
 
 ### Supported upload formats
 
