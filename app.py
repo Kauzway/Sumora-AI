@@ -193,6 +193,23 @@ groq_available = True
 # the same model backs both slide-image transcription and text summary/chat.
 # Overridable via env var so the model can be swapped without redeploying.
 VISION_MODEL = os.environ.get("NVIDIA_MODEL", "meta/muse-glimmer-30b")
+
+# Muse Glimmer takes its reasoning budget from a "Reasoning strength:" line in
+# the system prompt (low / medium / high / xhigh). It defaults to high, which
+# spends both the token budget and the wall-clock on chain of thought before
+# the answer starts — wasted on OCR-style transcription, and a real risk
+# against the per-call timeouts below. Tuned per task, overridable via env.
+REASONING_STRENGTH_TRANSCRIBE = os.environ.get("REASONING_STRENGTH_TRANSCRIBE", "low")
+REASONING_STRENGTH_SUMMARY = os.environ.get("REASONING_STRENGTH_SUMMARY", "medium")
+REASONING_STRENGTH_CHAT = os.environ.get("REASONING_STRENGTH_CHAT", "medium")
+REASONING_STRENGTH_OVERVIEW = os.environ.get("REASONING_STRENGTH_OVERVIEW", "low")
+
+
+def with_reasoning_strength(system_prompt, strength):
+    """Prefix a system prompt with Muse Glimmer's reasoning-strength directive."""
+    return f"Reasoning strength: {strength}\n\n{system_prompt}"
+
+
 PROCESSING_BATCH_SIZE = 5                # Slides processed per batch.
 # A batch of 5 concurrent calls takes ~30-60s for vision, so we are already
 # well under 40 RPM without any pause. 2s is just a courtesy gap to avoid
@@ -405,7 +422,8 @@ def vision_transcribe_slide(img_path, slide_num, timeout=90.0):
     completion = vision_client.chat.completions.create(
         model=VISION_MODEL,
         messages=[
-            {"role": "system", "content": VISION_TRANSCRIBE_SYSTEM},
+            {"role": "system", "content": with_reasoning_strength(
+                VISION_TRANSCRIBE_SYSTEM, REASONING_STRENGTH_TRANSCRIBE)},
             {"role": "user", "content": [
                 {"type": "text", "text": VISION_TRANSCRIBE_USER},
                 {"type": "image_url", "image_url": {"url": data_url}},
@@ -418,8 +436,12 @@ def vision_transcribe_slide(img_path, slide_num, timeout=90.0):
     )
 
     message = completion.choices[0].message
-    text = getattr(message, "content", None) or getattr(message, "reasoning_content", "")
-    text = (text or "").strip()
+    # Muse Glimmer is a channel-scoped reasoning model: the private chain of
+    # thought is the `to=self` turn and surfaces as reasoning_content; only the
+    # `to=user` turn lands in content. Never fall back to reasoning_content —
+    # that leaks raw CoT to the user. Empty content means the answer was
+    # clipped mid-reasoning, so fail and let the retry path deal with it.
+    text = (getattr(message, "content", None) or "").strip()
     if not text:
         raise RuntimeError(f"Empty transcription for slide {slide_num}")
     return text
@@ -1067,7 +1089,8 @@ def generate_groq_summary(slide_text, slide_num, streaming=True,
         f"Slide {slide_num} transcription:\n{slide_text}"
     )
     messages = [
-        {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+        {"role": "system", "content": with_reasoning_strength(
+            SUMMARY_SYSTEM_PROMPT, REASONING_STRENGTH_SUMMARY)},
         {"role": "user", "content": user_message},
     ]
 
@@ -1124,8 +1147,12 @@ def generate_groq_summary(slide_text, slide_num, streaming=True,
         timeout=90.0,
     )
     message = response.choices[0].message
-    summary = (getattr(message, "content", None)
-               or getattr(message, "reasoning_content", "")).strip()
+    # Muse Glimmer is a channel-scoped reasoning model: the private chain of
+    # thought is the `to=self` turn and surfaces as reasoning_content; only the
+    # `to=user` turn lands in content. Never fall back to reasoning_content —
+    # that leaks raw CoT to the user. Empty content means the answer was
+    # clipped mid-reasoning, so fail and let the retry path deal with it.
+    summary = (getattr(message, "content", None) or "").strip()
     if not summary:
         raise RuntimeError(f"Empty summary from NIM for slide {slide_num}")
     return summary
@@ -1320,7 +1347,8 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
             system_content += "\n\n---\n" + "\n\n---\n".join(context_blocks)
 
         messages = [
-            {"role": "system", "content": system_content},
+            {"role": "system", "content": with_reasoning_strength(
+                system_content, REASONING_STRENGTH_CHAT)},
             {"role": "user", "content": user_message + "\n\nAnswer directly, no meta-commentary on your reasoning."},
         ]
         
@@ -1359,11 +1387,11 @@ def generate_groq_chat_response(user_message, session_id=None, current_slide=Non
                 # Extract content from the response with safer access
                 if hasattr(completion, 'choices') and completion.choices and completion.choices[0] and hasattr(completion.choices[0], 'message'):
                     message = completion.choices[0].message
+                    # Content only: reasoning_content carries Muse Glimmer's
+                    # private `to=self` chain of thought and must never be
+                    # shown to the user. Empty content falls through to the
+                    # local fallback response below.
                     content = getattr(message, "content", None)
-                    # NVIDIA NIM reasoning-style models place the answer in
-                    # reasoning_content when content is empty; fall back to it.
-                    if not content or content.isspace():
-                        content = getattr(message, "reasoning_content", None)
 
                     if content and not content.isspace():
                         print("Chat response generated successfully")
@@ -2263,7 +2291,8 @@ Format:
         # Create minimal messages for the API call
         system_message = "You create extremely concise presentation overviews. Be brief and informative."
         messages = [
-            {"role": "system", "content": system_message},
+            {"role": "system", "content": with_reasoning_strength(
+                system_message, REASONING_STRENGTH_OVERVIEW)},
             {"role": "user", "content": prompt}
         ]
         
@@ -2286,7 +2315,8 @@ Format:
                 # Get overview content
                 if hasattr(response, 'choices') and response.choices and hasattr(response.choices[0], 'message'):
                     message = response.choices[0].message
-                    overview = getattr(message, "content", None) or getattr(message, "reasoning_content", "")
+                    # Content only — see the reasoning_content note above.
+                    overview = getattr(message, "content", None) or ""
                     
                     # Ensure we start with a heading or bullet
                     if not overview.startswith('#') and not overview.startswith('*') and not overview.startswith('-'):
